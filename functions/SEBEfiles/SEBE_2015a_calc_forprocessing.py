@@ -61,12 +61,8 @@ def SEBE_2015a_calc(
     wallstot = torch.floor(walls * (1 / voxelheight)) * voxelheight
     # wallsections = torch.floor(torch.max(walls) * (1 / voxelheight))     # finding tallest wall
     wallsections = torch.floor(wallmaxheight * (1 / voxelheight))
-    # feedback.setProgressText('torch.max(walls):' + str(torch.max(walls)))
-    # feedback.setProgressText('1 / voxelheight:' + str(1 / voxelheight))
-    # feedback.setProgressText('voxel:' + str(voxelheight))
-    # feedback.setProgressText('wallsections:' + str(wallsections))
-    # feedback.setProgressText('torch.shape(wallrow)[0]:' + str(torch.shape(wallrow)[0]))
-    wallmatrix = torch.zeros((torch.shape(wallrow)[0], int(wallsections)), device=device)
+
+    wallmatrix = torch.zeros((wallrow.shape[0], int(wallsections)), device=device)
     Energyyearwall = torch.clone(wallmatrix)
 
     # Main loop - Creating skyvault of patches of constant radians (Tregeneza and Sharples, 1993)
@@ -74,9 +70,9 @@ def SEBE_2015a_calc(
     aziinterval = torch.tensor([30, 30, 24, 24, 18, 12, 6, 1], device=device)
 
     if usevegdem == 1:
-        wallshve = torch.zeros(torch.shape(a), device=device)
+        wallshve = torch.zeros(a.shape, device=device)
         vegrow, vegcol = torch.where(vegdem > 0)  # row and col for each veg pixel
-        vegdata = torch.zeros((torch.shape(vegrow)[0], 3), device=device)
+        vegdata = torch.zeros((vegrow.shape[0], 3), device=device)
         for i in range(0, vegrow.shape[0] - 1):
             vegdata[i, 0] = vegrow[i] + 1
             vegdata[i, 1] = vegcol[i] + 1
@@ -176,7 +172,7 @@ def SEBE_2015a_calc(
 
             wallmatrix = wallmatrix * 0
 
-            for p in range(torch.shape(wallmatrix)[0]):
+            for p in range(wallmatrix.shape[0]):
                 if wallsun[wallrow[p], wallcol[p]] > 0:  # Sections in sun
                     if (
                         wallsun[int(wallrow[p]), int(wallcol[p])]

@@ -214,364 +214,366 @@ class ProcessingSEBEAlgorithm(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
-        # InputParameters
-        outputDir = self.parameterAsString(
-            parameters, self.OUTPUT_DIR, context
-        )
-        dsmlayer = self.parameterAsRasterLayer(
-            parameters, self.INPUT_DSM, context
-        )
-        transVeg = self.parameterAsDouble(parameters, self.TRANS_VEG, context)
-        vegdsm = self.parameterAsRasterLayer(
-            parameters, self.INPUT_CDSM, context
-        )
-        vegdsm2 = self.parameterAsRasterLayer(
-            parameters, self.INPUT_TDSM, context
-        )
-        whlayer = self.parameterAsRasterLayer(
-            parameters, self.INPUT_HEIGHT, context
-        )
-        walayer = self.parameterAsRasterLayer(
-            parameters, self.INPUT_ASPECT, context
-        )
-        trunkr = self.parameterAsDouble(
-            parameters, self.INPUT_THEIGHT, context
-        )
-        onlyglobal = self.parameterAsBool(parameters, self.ONLYGLOBAL, context)
-        utcpos = self.parameterAsString(parameters, self.UTC, context)
-        albedo = self.parameterAsDouble(parameters, self.ALBEDO, context)
-        inputMet = self.parameterAsString(parameters, self.INPUT_MET, context)
-        saveskyirr = self.parameterAsBool(parameters, self.SAVESKYIRR, context)
-        use_gpu = self.parameterAsBool(parameters, self.USE_GPU, context)
+        with torch.no_grad():
+            # InputParameters
+            outputDir = self.parameterAsString(
+                parameters, self.OUTPUT_DIR, context
+            )
+            dsmlayer = self.parameterAsRasterLayer(
+                parameters, self.INPUT_DSM, context
+            )
+            transVeg = self.parameterAsDouble(parameters, self.TRANS_VEG, context)
+            vegdsm = self.parameterAsRasterLayer(
+                parameters, self.INPUT_CDSM, context
+            )
+            vegdsm2 = self.parameterAsRasterLayer(
+                parameters, self.INPUT_TDSM, context
+            )
+            whlayer = self.parameterAsRasterLayer(
+                parameters, self.INPUT_HEIGHT, context
+            )
+            walayer = self.parameterAsRasterLayer(
+                parameters, self.INPUT_ASPECT, context
+            )
+            trunkr = self.parameterAsDouble(
+                parameters, self.INPUT_THEIGHT, context
+            )
+            onlyglobal = self.parameterAsBool(parameters, self.ONLYGLOBAL, context)
+            utcpos = self.parameterAsString(parameters, self.UTC, context)
+            albedo = self.parameterAsDouble(parameters, self.ALBEDO, context)
+            inputMet = self.parameterAsString(parameters, self.INPUT_MET, context)
+            saveskyirr = self.parameterAsBool(parameters, self.SAVESKYIRR, context)
+            use_gpu = self.parameterAsBool(parameters, self.USE_GPU, context)
 
-        irrFile = self.parameterAsFileOutput(
-            parameters, self.IRR_FILE, context
-        )
-        outputRoof = self.parameterAsOutputLayer(
-            parameters, self.OUTPUT_ROOF, context
-        )
+            irrFile = self.parameterAsFileOutput(
+                parameters, self.IRR_FILE, context
+            )
+            outputRoof = self.parameterAsOutputLayer(
+                parameters, self.OUTPUT_ROOF, context
+            )
 
-        if parameters["OUTPUT_DIR"] == "TEMPORARY_OUTPUT":
-            if not (os.path.isdir(outputDir)):
-                os.mkdir(outputDir)
-        
-        device = torch.device("cpu")
-        if use_gpu and torch.cuda.is_available():
-            device = torch.device("cuda")
+            if parameters["OUTPUT_DIR"] == "TEMPORARY_OUTPUT":
+                if not (os.path.isdir(outputDir)):
+                    os.mkdir(outputDir)
             
+            device = torch.device("cpu")
+            if use_gpu and torch.cuda.is_available():
+                device = torch.device("cuda")
+                
 
-        provider = dsmlayer.dataProvider()
-        filepath_dsm = str(provider.dataSourceUri())
-        self.gdal_dsm = gdal.Open(filepath_dsm)
-        self.dsm = self.gdal_dsm.ReadAsArray().astype(float)
-        sizex = self.dsm.shape[0]
-        sizey = self.dsm.shape[1]
+            provider = dsmlayer.dataProvider()
+            filepath_dsm = str(provider.dataSourceUri())
+            self.gdal_dsm = gdal.Open(filepath_dsm)
+            self.dsm = self.gdal_dsm.ReadAsArray().astype(float)
+            sizex = self.dsm.shape[0]
+            sizey = self.dsm.shape[1]
 
-        # response to issue #85
-        nd = self.gdal_dsm.GetRasterBand(1).GetNoDataValue()
-        self.dsm[self.dsm == nd] = 0.0
-        if self.dsm.min() < 0:
-            self.dsm = self.dsm + torch.abs(self.dsm.min())
+            # response to issue #85
+            nd = self.gdal_dsm.GetRasterBand(1).GetNoDataValue()
+            self.dsm[self.dsm == nd] = 0.0
+            if self.dsm.min() < 0:
+                self.dsm = self.dsm + torch.abs(self.dsm.min())
 
-        # response to issue #104
-        self.sorted_utclist
-        utc = self.sorted_utclist[int(utcpos)]["utc_offset"]
+            # response to issue #104
+            self.sorted_utclist
+            utc = self.sorted_utclist[int(utcpos)]["utc_offset"]
 
-        # Get latlon from grid coordinate system
-        old_cs = osr.SpatialReference()
-        dsm_ref = dsmlayer.crs().toWkt()
-        old_cs.ImportFromWkt(dsm_ref)
+            # Get latlon from grid coordinate system
+            old_cs = osr.SpatialReference()
+            dsm_ref = dsmlayer.crs().toWkt()
+            old_cs.ImportFromWkt(dsm_ref)
 
-        wgs84_wkt = """
-        GEOGCS["WGS 84",
-            DATUM["WGS_1984",
-                SPHEROID["WGS 84",6378137,298.257223563,
-                    AUTHORITY["EPSG","7030"]],
-                AUTHORITY["EPSG","6326"]],
-            PRIMEM["Greenwich",0,
-                AUTHORITY["EPSG","8901"]],
-            UNIT["degree",0.01745329251994328,
-                AUTHORITY["EPSG","9122"]],
-            AUTHORITY["EPSG","4326"]]"""
+            wgs84_wkt = """
+            GEOGCS["WGS 84",
+                DATUM["WGS_1984",
+                    SPHEROID["WGS 84",6378137,298.257223563,
+                        AUTHORITY["EPSG","7030"]],
+                    AUTHORITY["EPSG","6326"]],
+                PRIMEM["Greenwich",0,
+                    AUTHORITY["EPSG","8901"]],
+                UNIT["degree",0.01745329251994328,
+                    AUTHORITY["EPSG","9122"]],
+                AUTHORITY["EPSG","4326"]]"""
 
-        new_cs = osr.SpatialReference()
-        new_cs.ImportFromWkt(wgs84_wkt)
+            new_cs = osr.SpatialReference()
+            new_cs.ImportFromWkt(wgs84_wkt)
 
-        transform = osr.CoordinateTransformation(old_cs, new_cs)
-        width = self.gdal_dsm.RasterXSize
-        height = self.gdal_dsm.RasterYSize
-        geotransform = self.gdal_dsm.GetGeoTransform()
-        minx = geotransform[0]
-        miny = (
-            geotransform[3]
-            + width * geotransform[4]
-            + height * geotransform[5]
-        )
-        lonlat = transform.TransformPoint(minx, miny)
-        gdalver = float(gdal.__version__[0])
-        if gdalver == 3.0:
-            lon = lonlat[1]  # changed to gdal 3
-            lat = lonlat[0]  # changed to gdal 3
-        else:
-            lon = lonlat[0]  # changed to gdal 2
-            lat = lonlat[1]  # changed to gdal 2
-        self.scale = 1 / geotransform[1]
+            transform = osr.CoordinateTransformation(old_cs, new_cs)
+            width = self.gdal_dsm.RasterXSize
+            height = self.gdal_dsm.RasterYSize
+            geotransform = self.gdal_dsm.GetGeoTransform()
+            minx = geotransform[0]
+            miny = (
+                geotransform[3]
+                + width * geotransform[4]
+                + height * geotransform[5]
+            )
+            lonlat = transform.TransformPoint(minx, miny)
+            gdalver = float(gdal.__version__[0])
+            if gdalver == 3.0:
+                lon = lonlat[1]  # changed to gdal 3
+                lat = lonlat[0]  # changed to gdal 3
+            else:
+                lon = lonlat[0]  # changed to gdal 2
+                lat = lonlat[1]  # changed to gdal 2
+            self.scale = 1 / geotransform[1]
 
-        feedback.setProgressText("Longitude derived from DSM: " + str(lon))
-        feedback.setProgressText("Latitude derived from DSM: " + str(lat))
+            feedback.setProgressText("Longitude derived from DSM: " + str(lon))
+            feedback.setProgressText("Latitude derived from DSM: " + str(lat))
 
-        trunkfile = 0
-        trunkratio = 0
-        psi = transVeg / 100.0
+            trunkfile = 0
+            trunkratio = 0
+            psi = transVeg / 100.0
 
-        if vegdsm:
-            usevegdem = 1
-            feedback.setProgressText("Vegetation scheme activated")
-            # vegdsm = self.parameterAsRasterLayer(parameters, self.INPUT_CDSM, context)
-            # if vegdsm is None:
-            #     raise QgsProcessingException("Error: No valid vegetation DSM selected")
-
-            # load raster
-            gdal.AllRegister()
-            provider = vegdsm.dataProvider()
-            filePathOld = str(provider.dataSourceUri())
-            dataSet = gdal.Open(filePathOld)
-            vegdsm = dataSet.ReadAsArray().astype(float)
-            filePath_cdsm = filePathOld
-            vegsizex = vegdsm.shape[0]
-            vegsizey = vegdsm.shape[1]
-
-            if not (vegsizex == sizex) & (vegsizey == sizey):
-                raise QgsProcessingException(
-                    "Error in Vegetation Canopy DSM: All rasters must be of same extent and resolution"
-                )
-
-            if vegdsm2:
-                # vegdsm2 = self.parameterAsRasterLayer(parameters, self.INPUT_TDSM, context)
-
-                # if vegdsm2 is None:
-                #     raise QgsProcessingException("Error: No valid Trunk zone DSM selected")
+            if vegdsm:
+                usevegdem = 1
+                feedback.setProgressText("Vegetation scheme activated")
+                # vegdsm = self.parameterAsRasterLayer(parameters, self.INPUT_CDSM, context)
+                # if vegdsm is None:
+                #     raise QgsProcessingException("Error: No valid vegetation DSM selected")
 
                 # load raster
                 gdal.AllRegister()
-                provider = vegdsm2.dataProvider()
+                provider = vegdsm.dataProvider()
                 filePathOld = str(provider.dataSourceUri())
-                filePath_tdsm = filePathOld
                 dataSet = gdal.Open(filePathOld)
-                vegdsm2 = dataSet.ReadAsArray().astype(float)
+                vegdsm = dataSet.ReadAsArray().astype(float)
+                filePath_cdsm = filePathOld
+                vegsizex = vegdsm.shape[0]
+                vegsizey = vegdsm.shape[1]
+
+                if not (vegsizex == sizex) & (vegsizey == sizey):
+                    raise QgsProcessingException(
+                        "Error in Vegetation Canopy DSM: All rasters must be of same extent and resolution"
+                    )
+
+                if vegdsm2:
+                    # vegdsm2 = self.parameterAsRasterLayer(parameters, self.INPUT_TDSM, context)
+
+                    # if vegdsm2 is None:
+                    #     raise QgsProcessingException("Error: No valid Trunk zone DSM selected")
+
+                    # load raster
+                    gdal.AllRegister()
+                    provider = vegdsm2.dataProvider()
+                    filePathOld = str(provider.dataSourceUri())
+                    filePath_tdsm = filePathOld
+                    dataSet = gdal.Open(filePathOld)
+                    vegdsm2 = dataSet.ReadAsArray().astype(float)
+                else:
+                    trunkratio = trunkr / 100.0
+                    vegdsm2 = vegdsm * trunkratio
+                    filePath_tdsm = None
+
+                vegsizex = vegdsm2.shape[0]
+                vegsizey = vegdsm2.shape[1]
+
+                if not (vegsizex == sizex) & (vegsizey == sizey):  # &
+                    raise QgsProcessingException(
+                        "Error in Trunk Zone DSM: All rasters must be of same extent and resolution"
+                    )
             else:
-                trunkratio = trunkr / 100.0
-                vegdsm2 = vegdsm * trunkratio
+                vegdsm = 0
+                vegdsm2 = 0
+                usevegdem = 0
+                filePath_cdsm = None
                 filePath_tdsm = None
 
-            vegsizex = vegdsm2.shape[0]
-            vegsizey = vegdsm2.shape[1]
-
-            if not (vegsizex == sizex) & (vegsizey == sizey):  # &
+            # wall height layer
+            # if whlayer is None:
+            #     raise QgsProcessingException("Error: No valid wall height raster layer is selected")
+            provider = whlayer.dataProvider()
+            filepath_wh = str(provider.dataSourceUri())
+            self.gdal_wh = gdal.Open(filepath_wh)
+            wheight = self.gdal_wh.ReadAsArray().astype(float)
+            vhsizex = wheight.shape[0]
+            vhsizey = wheight.shape[1]
+            if not (vhsizex == sizex) & (vhsizey == sizey):
                 raise QgsProcessingException(
-                    "Error in Trunk Zone DSM: All rasters must be of same extent and resolution"
+                    "Error in Wall height raster: All rasters must be of same extent and resolution"
                 )
-        else:
-            vegdsm = 0
-            vegdsm2 = 0
-            usevegdem = 0
-            filePath_cdsm = None
-            filePath_tdsm = None
 
-        # wall height layer
-        # if whlayer is None:
-        #     raise QgsProcessingException("Error: No valid wall height raster layer is selected")
-        provider = whlayer.dataProvider()
-        filepath_wh = str(provider.dataSourceUri())
-        self.gdal_wh = gdal.Open(filepath_wh)
-        wheight = self.gdal_wh.ReadAsArray().astype(float)
-        vhsizex = wheight.shape[0]
-        vhsizey = wheight.shape[1]
-        if not (vhsizex == sizex) & (vhsizey == sizey):
-            raise QgsProcessingException(
-                "Error in Wall height raster: All rasters must be of same extent and resolution"
+            wallmaxheight = self.gdal_wh.GetRasterBand(1).GetStatistics(
+                True, True
+            )[1]
+
+            # wall aspectlayer
+            # if walayer is None:
+            #     raise QgsProcessingException("Error: No valid wall aspect raster layer is selected")
+            provider = walayer.dataProvider()
+            filepath_wa = str(provider.dataSourceUri())
+            self.gdal_wa = gdal.Open(filepath_wa)
+            waspect = self.gdal_wa.ReadAsArray().astype(float)
+            vasizex = waspect.shape[0]
+            vasizey = waspect.shape[1]
+            if not (vasizex == sizex) & (vasizey == sizey):
+                raise QgsProcessingException(
+                    "Error in Wall aspect raster: All rasters must be of same extent and resolution"
+                )
+
+            voxelheight = geotransform[1]  # float
+
+            # Metdata
+            headernum = 1
+            delim = " "
+
+            try:
+                self.metdata = torch.from_numpy(np.loadtxt(
+                    inputMet, skiprows=headernum, delimiter=delim
+                ), device=device)
+            except:
+                QgsProcessingException(
+                    "Error: Make sure format of meteorological file is correct. You can"
+                    "prepare your data by using 'Prepare Existing Data' in "
+                    "the Pre-processor"
+                )
+
+            testwhere = torch.where(
+                (self.metdata[:, 14] < 0.0) | (self.metdata[:, 14] > 1300.0)
+            )
+            if testwhere[0].__len__() > 0:
+                QgsProcessingException(
+                    "Error: Kdown - beyond what is expected at line: "
+                    + str(testwhere[0] + 1)
+                )
+
+            if self.metdata.shape[1] == 24:
+                feedback.setProgressText("Meteorological data succefully loaded")
+            else:
+                QgsProcessingException(
+                    "Error: Wrong number of columns in meteorological data. You can "
+                    "prepare your data by using 'Prepare Existing Data' in "
+                    "the Pre-processor"
+                )
+
+            alt = torch.median(self.dsm)
+            if alt < 0:
+                alt = 3
+
+            feedback.setProgressText(
+                "Calculating sun positions for each time step"
+            )
+            location = {"longitude": lon, "latitude": lat, "altitude": alt}
+            YYYY, altitude, azimuth, zen, jday, leafon, dectime, altmax = (
+                Solweig_2015a_metdata_noload(self.metdata, location, utc)
             )
 
-        wallmaxheight = self.gdal_wh.GetRasterBand(1).GetStatistics(
-            True, True
-        )[1]
-
-        # wall aspectlayer
-        # if walayer is None:
-        #     raise QgsProcessingException("Error: No valid wall aspect raster layer is selected")
-        provider = walayer.dataProvider()
-        filepath_wa = str(provider.dataSourceUri())
-        self.gdal_wa = gdal.Open(filepath_wa)
-        waspect = self.gdal_wa.ReadAsArray().astype(float)
-        vasizex = waspect.shape[0]
-        vasizey = waspect.shape[1]
-        if not (vasizex == sizex) & (vasizey == sizey):
-            raise QgsProcessingException(
-                "Error in Wall aspect raster: All rasters must be of same extent and resolution"
+            feedback.setProgressText("Distributing irradiance on sky vault")
+            output = {"energymonth": 0, "energyyear": 1, "suitmap": 0}
+            radmatI, radmatD, radmatR = sunmapcreator_2015a(
+                self.metdata,
+                altitude,
+                azimuth,
+                onlyglobal,
+                output,
+                jday,
+                albedo,
+                location,
+                zen,
+                device
             )
 
-        voxelheight = geotransform[1]  # float
+            if saveskyirr:
+                metout = torch.zeros((145, 4), device=device)
+                metout[:, 0] = radmatI[:, 0]
+                metout[:, 1] = radmatI[:, 1]
+                metout[:, 2] = radmatI[:, 2]
+                metout[:, 3] = radmatD[:, 2]
+                header = "%altitude azimuth radI radD"
+                numformat = "%6.2f %6.2f %6.2f %6.2f"
+                np.savetxt(
+                    irrFile, metout, fmt=numformat, header=header, comments=""
+                )
 
-        # Metdata
-        headernum = 1
-        delim = " "
+            building_slope, building_aspect = get_ders(self.dsm, self.scale)
 
-        try:
-            self.metdata = torch.from_numpy(np.loadtxt(
-                inputMet, skiprows=headernum, delimiter=delim
-            ), device=device)
-        except:
-            QgsProcessingException(
-                "Error: Make sure format of meteorological file is correct. You can"
-                "prepare your data by using 'Prepare Existing Data' in "
-                "the Pre-processor"
+            WriteMetaDataSEBE.writeRunInfo(
+                outputDir,
+                filepath_dsm,
+                self.gdal_dsm,
+                usevegdem,
+                filePath_cdsm,
+                trunkfile,
+                filePath_tdsm,
+                lat,
+                lon,
+                utc,
+                inputMet,
+                albedo,
+                onlyglobal,
+                trunkratio,
+                psi,
+                sizex,
+                sizey,
             )
 
-        testwhere = torch.where(
-            (self.metdata[:, 14] < 0.0) | (self.metdata[:, 14] > 1300.0)
-        )
-        if testwhere[0].__len__() > 0:
-            QgsProcessingException(
-                "Error: Kdown - beyond what is expected at line: "
-                + str(testwhere[0] + 1)
+            # Main function
+            feedback.setProgressText("Executing main model")
+            seberesult = sebe.SEBE_2015a_calc(
+                self.dsm,
+                self.scale,
+                building_slope,
+                building_aspect,
+                voxelheight,
+                sizey,
+                sizex,
+                vegdsm,
+                vegdsm2,
+                wheight,
+                waspect,
+                albedo,
+                psi,
+                radmatI,
+                radmatD,
+                radmatR,
+                usevegdem,
+                feedback,
+                wallmaxheight,
+                device
             )
 
-        if self.metdata.shape[1] == 24:
-            feedback.setProgressText("Meteorological data succefully loaded")
-        else:
-            QgsProcessingException(
-                "Error: Wrong number of columns in meteorological data. You can "
-                "prepare your data by using 'Prepare Existing Data' in "
-                "the Pre-processor"
+            Energyyearroof = seberesult["Energyyearroof"]
+            Energyyearwall = seberesult["Energyyearwall"]
+            vegdata = seberesult["vegdata"]
+
+            feedback.setProgressText(
+                "SEBE: Model calculation finished. Saving to disk"
             )
 
-        alt = torch.median(self.dsm)
-        if alt < 0:
-            alt = 3
+            if outputRoof:
+                saveraster(self.gdal_dsm, outputRoof, Energyyearroof)
 
-        feedback.setProgressText(
-            "Calculating sun positions for each time step"
-        )
-        location = {"longitude": lon, "latitude": lat, "altitude": alt}
-        YYYY, altitude, azimuth, zen, jday, leafon, dectime, altmax = (
-            Solweig_2015a_metdata_noload(self.metdata, location, utc)
-        )
-
-        feedback.setProgressText("Distributing irradiance on sky vault")
-        output = {"energymonth": 0, "energyyear": 1, "suitmap": 0}
-        radmatI, radmatD, radmatR = sunmapcreator_2015a(
-            self.metdata,
-            altitude,
-            azimuth,
-            onlyglobal,
-            output,
-            jday,
-            albedo,
-            location,
-            zen,
-            device
-        )
-
-        if saveskyirr:
-            metout = torch.zeros((145, 4), device=device)
-            metout[:, 0] = radmatI[:, 0]
-            metout[:, 1] = radmatI[:, 1]
-            metout[:, 2] = radmatI[:, 2]
-            metout[:, 3] = radmatD[:, 2]
-            header = "%altitude azimuth radI radD"
-            numformat = "%6.2f %6.2f %6.2f %6.2f"
-            np.savetxt(
-                irrFile, metout, fmt=numformat, header=header, comments=""
-            )
-
-        building_slope, building_aspect = get_ders(self.dsm, self.scale)
-
-        WriteMetaDataSEBE.writeRunInfo(
-            outputDir,
-            filepath_dsm,
-            self.gdal_dsm,
-            usevegdem,
-            filePath_cdsm,
-            trunkfile,
-            filePath_tdsm,
-            lat,
-            lon,
-            utc,
-            inputMet,
-            albedo,
-            onlyglobal,
-            trunkratio,
-            psi,
-            sizex,
-            sizey,
-        )
-
-        # Main function
-        feedback.setProgressText("Executing main model")
-        seberesult = sebe.SEBE_2015a_calc(
-            self.dsm,
-            self.scale,
-            building_slope,
-            building_aspect,
-            voxelheight,
-            sizey,
-            sizex,
-            vegdsm,
-            vegdsm2,
-            wheight,
-            waspect,
-            albedo,
-            psi,
-            radmatI,
-            radmatD,
-            radmatR,
-            usevegdem,
-            feedback,
-            wallmaxheight,
-            device
-        )
-
-        Energyyearroof = seberesult["Energyyearroof"]
-        Energyyearwall = seberesult["Energyyearwall"]
-        vegdata = seberesult["vegdata"]
-
-        feedback.setProgressText(
-            "SEBE: Model calculation finished. Saving to disk"
-        )
-
-        if outputRoof:
-            saveraster(self.gdal_dsm, outputRoof, Energyyearroof)
-
-        saveraster(self.gdal_dsm, outputDir + "/dsm.tif", self.dsm)
-        filenameroof = outputDir + "/Energyyearroof.tif"
-        saveraster(self.gdal_dsm, filenameroof, Energyyearroof)
-        filenamewall = outputDir + "/Energyyearwall.txt"
-        header = "%row col irradiance"
-        numformat = "%4d %4d " + "%6.2f " * (Energyyearwall.shape[1] - 2)
-        np.savetxt(
-            filenamewall,
-            Energyyearwall,
-            fmt=numformat,
-            header=header,
-            comments="",
-        )
-        if usevegdem == 1:
-            filenamewall = outputDir + "/Vegetationdata.txt"
-            header = "%row col height"
-            numformat = "%4d %4d %6.2f"
+            saveraster(self.gdal_dsm, outputDir + "/dsm.tif", self.dsm)
+            filenameroof = outputDir + "/Energyyearroof.tif"
+            saveraster(self.gdal_dsm, filenameroof, Energyyearroof)
+            filenamewall = outputDir + "/Energyyearwall.txt"
+            header = "%row col irradiance"
+            numformat = "%4d %4d " + "%6.2f " * (Energyyearwall.shape[1] - 2)
             np.savetxt(
                 filenamewall,
-                vegdata,
+                Energyyearwall,
                 fmt=numformat,
                 header=header,
                 comments="",
             )
-
-        return {
-            self.OUTPUT_DIR: outputDir,
-            self.IRR_FILE: irrFile,
-            self.OUTPUT_ROOF: outputRoof,
-        }
+            if usevegdem == 1:
+                filenamewall = outputDir + "/Vegetationdata.txt"
+                header = "%row col height"
+                numformat = "%4d %4d %6.2f"
+                np.savetxt(
+                    filenamewall,
+                    vegdata,
+                    fmt=numformat,
+                    header=header,
+                    comments="",
+                )
+            return {
+                self.OUTPUT_DIR: outputDir,
+                self.IRR_FILE: irrFile,
+                self.OUTPUT_ROOF: outputRoof,
+            }
+            
+            
 
     def name(self):
         """

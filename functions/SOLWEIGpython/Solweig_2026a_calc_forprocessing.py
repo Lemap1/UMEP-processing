@@ -145,6 +145,7 @@ def Solweig_2026a_calc(
     a2_grid,
     a3_grid,
     shadow_past,
+    device
 ):
     """
     This is the core function of the SOLWEIG model
@@ -216,15 +217,7 @@ def Solweig_2026a_calc(
 
     # Degrees to radians
     deg2rad = torch.pi / 180
-    device = (
-        Tg.device
-        if isinstance(Tg, torch.Tensor)
-        else (
-            Ta.device
-            if isinstance(Ta, torch.Tensor)
-            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        )
-    )
+
 
     # Find sunrise decimal hour - new from 2014a
     _, _, _, SNUP = daylen(jday, location["latitude"])
@@ -300,6 +293,7 @@ def Solweig_2026a_calc(
                     bush,
                     walls,
                     dirwalls * torch.pi / 180.0,
+                    device,
                     walls_scheme,
                     dirwalls_scheme * torch.pi / 180.0,
                 )
@@ -314,6 +308,7 @@ def Solweig_2026a_calc(
                     scale,
                     walls,
                     dirwalls * torch.pi / 180.0,
+                    device,
                     walls_scheme,
                     dirwalls_scheme * torch.pi / 180.0,
                 )

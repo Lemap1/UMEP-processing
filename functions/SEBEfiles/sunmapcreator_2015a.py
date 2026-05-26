@@ -129,8 +129,8 @@ def sunmapcreator_2015a(
 
     # Adjusting the numbers if multiple years is used
 
-    if torch.shape(met)[0] > 8760:
-        multiyear = torch.shape(met)[0] / 8760
+    if met.shape[0] > 8760:
+        multiyear = met.shape[0] / 8760
         radmatI[:, 2:15] = radmatI[:, 2:15] / multiyear
         radmatD[:, 2:15] = radmatD[:, 2:15] / multiyear
         radmatR[:, 2:15] = radmatR[:, 2:15] / multiyear

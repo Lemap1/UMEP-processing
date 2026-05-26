@@ -3,7 +3,6 @@ import torch
 try:
     from sklearn.cluster import KMeans
 except:
-    print("passe")
     pass
 
 
@@ -28,11 +27,12 @@ def wallscheme_prepare(
     walls = wa.findwalls_sp(
         dsm,
         2,
-        torch.tensor([[1, 1, 1], [1, 0, 1], [1, 1, 1]], device=dsm.device),
+        device,
+        torch.tensor([[1, 1, 1], [1, 0, 1], [1, 1, 1]], device=device)
     )
     walls_copy = torch.clone(walls)
     aspect = wa.filter1Goodwin_as_aspect_v3(
-        walls_copy, scale, dsm, feedback, 100
+        walls_copy, scale, dsm, feedback, 100, device
     )
 
     walls_exact = walls.clone()
@@ -334,7 +334,6 @@ def svf_kmeans(
 
     # Remove cluster representing ground areas, i.e. where dsm - dem = 0
     cluster_range = torch.arange(clusters, device=device)
-    # cluster_range = cluster_range[cluster_range != torch.unique(kmeans_clusters[ground == 1])]
 
     # Array to store mean heights of clusters
     cluster_heights = torch.zeros((cluster_range.shape[0]), device=device)
@@ -373,7 +372,6 @@ def svf_kmeans(
 
         # Elevate ground in dsm
         temp_dsm = ((dsm + i) * ground) + (dsm * (1 - ground))
-        # temp_dsm = dsm[ground == 1] + temp_mean
 
         if usevegdem == 1:
             # Subtract from cdsm
@@ -542,10 +540,10 @@ def svf_kmeans(
         ]
     )
 
-    return voxelTable, cluster_heights
+    return voxelTable
 
 
-def interpolate_svf(voxelTable, cluster_heights, kmeans):
+def interpolate_svf(voxelTable):
 
     unique_wall_pixels = torch.unique(voxelTable[:, 4])
     unique_wall_pixels = unique_wall_pixels[unique_wall_pixels != 0]

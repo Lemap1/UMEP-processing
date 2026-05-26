@@ -1,0 +1,23 @@
+Working... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:02
+Run started:2026-05-18 07:53:41.189134+00:00
+
+Test results:
+	No issues identified.
+
+Code scanned:
+	Total lines of code: 49763
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 8
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 57
+		Medium: 0
+		High: 0
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 0
+		Medium: 20
+		High: 37
+Files skipped (0):

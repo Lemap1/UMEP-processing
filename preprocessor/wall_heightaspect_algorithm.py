@@ -107,60 +107,64 @@ class ProcessingWallHeightAscpetAlgorithm(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
-        torch.set_num_threads(max(1, os.cpu_count()))
-        torch.set_num_interop_threads(max(1, os.cpu_count()))
-        outputFileHeight = self.parameterAsOutputLayer(
-            parameters, self.OUTPUT_HEIGHT, context
-        )
-        outputFileAspect = self.parameterAsOutputLayer(
-            parameters, self.OUTPUT_ASPECT, context
-        )
-        dsmin = self.parameterAsRasterLayer(parameters, self.INPUT, context)
-        # aspectcalculation = self.parameterAsBool(parameters, self.ASPECT_BOOL, context)
-        walllimit = self.parameterAsDouble(
-            parameters, self.INPUT_LIMIT, context
-        )
-        use_gpu = self.parameterAsBool(parameters, self.USE_GPU, context)
-
-        cmd_folder = Path(
-            os.path.split(inspect.getfile(inspect.currentframe()))[0]
-        )
-        feedback.setProgressText(str(cmd_folder))
-        feedback.setProgressText(str(cmd_folder.parent))
-
-        device = torch.device("cpu")
-        if use_gpu and torch.cuda.is_available():
-            device = torch.device("cuda")
-            feedback.setProgressText("GPU detected and will be used for calculations.")
-
-        provider = dsmin.dataProvider()
-        filepath_dsm = str(provider.dataSourceUri())
-        gdal_dsm = gdal.Open(filepath_dsm)
-        dsm = gdal_dsm.ReadAsArray().astype(float)
-
-        feedback.setProgressText("Calculating wall height")
-        total = 100.0 / (int(dsm.shape[0] * dsm.shape[1]))
-        walls = wa.findwalls_sp(dsm, walllimit, device, False)
-
-        wallssave = walls
-        # feedback.setProgressText(outputFileHeight)
-        saverasternd(gdal_dsm, outputFileHeight, wallssave.cpu().detach().numpy())
-
-        if outputFileAspect:
-            total = 100.0 / 180.0
-            # outputFileAspect = self.parameterAsOutputLayer(parameters, self.OUTPUT_ASPECT, context)
-            feedback.setProgressText("Calculating wall aspect")
-            dirwalls = wa.filter1Goodwin_as_aspect_v3(
-                walls, torch.tensor(1, device=device), torch.tensor(dsm, device=device), feedback, torch.tensor(total, device=device), device
+        with torch.no_grad():
+            try:
+                torch.set_num_threads(max(1, os.cpu_count()))
+                torch.set_num_interop_threads(max(1, os.cpu_count()))
+            except:
+                pass
+            outputFileHeight = self.parameterAsOutputLayer(
+                parameters, self.OUTPUT_HEIGHT, context
             )
-            saverasternd(gdal_dsm, outputFileAspect, dirwalls.cpu().detach().numpy())
-        else:
-            feedback.setProgressText("Wall aspect not calculated")
+            outputFileAspect = self.parameterAsOutputLayer(
+                parameters, self.OUTPUT_ASPECT, context
+            )
+            dsmin = self.parameterAsRasterLayer(parameters, self.INPUT, context)
+            # aspectcalculation = self.parameterAsBool(parameters, self.ASPECT_BOOL, context)
+            walllimit = self.parameterAsDouble(
+                parameters, self.INPUT_LIMIT, context
+            )
+            use_gpu = self.parameterAsBool(parameters, self.USE_GPU, context)
 
-        return {
-            self.OUTPUT_HEIGHT: outputFileHeight,
-            self.OUTPUT_ASPECT: outputFileAspect,
-        }
+            cmd_folder = Path(
+                os.path.split(inspect.getfile(inspect.currentframe()))[0]
+            )
+            feedback.setProgressText(str(cmd_folder))
+            feedback.setProgressText(str(cmd_folder.parent))
+
+            device = torch.device("cpu")
+            if use_gpu and torch.cuda.is_available():
+                device = torch.device("cuda")
+                feedback.setProgressText("GPU detected and will be used for calculations.")
+
+            provider = dsmin.dataProvider()
+            filepath_dsm = str(provider.dataSourceUri())
+            gdal_dsm = gdal.Open(filepath_dsm)
+            dsm = gdal_dsm.ReadAsArray().astype(float)
+
+            feedback.setProgressText("Calculating wall height")
+            total = 100.0 / (int(dsm.shape[0] * dsm.shape[1]))
+            walls = wa.findwalls_sp(dsm, walllimit, device, False)
+
+            wallssave = walls
+            # feedback.setProgressText(outputFileHeight)
+            saverasternd(gdal_dsm, outputFileHeight, wallssave.cpu().detach().numpy())
+
+            if outputFileAspect:
+                total = 100.0 / 180.0
+                # outputFileAspect = self.parameterAsOutputLayer(parameters, self.OUTPUT_ASPECT, context)
+                feedback.setProgressText("Calculating wall aspect")
+                dirwalls = wa.filter1Goodwin_as_aspect_v3(
+                    walls, torch.tensor(1, device=device), torch.tensor(dsm, device=device), feedback, torch.tensor(total, device=device), device
+                )
+                saverasternd(gdal_dsm, outputFileAspect, dirwalls.cpu().detach().numpy())
+            else:
+                feedback.setProgressText("Wall aspect not calculated")
+
+            return {
+                self.OUTPUT_HEIGHT: outputFileHeight,
+                self.OUTPUT_ASPECT: outputFileAspect,
+            }
 
     def name(self):
         return "Urban Geometry: Wall Height and Aspect"

@@ -17,7 +17,6 @@ def _sync_if_cuda(device):
 
 
 # from ..functions.wallalgorithms import findwalls
-from ..functions import wallalgorithms as wa
 from ..functions import svf_for_voxels as svfv
 from ..util.SEBESOLWEIGCommonFiles import (
     shadowingfunction_wallheight_13 as shb,
@@ -27,9 +26,7 @@ from ..util.SEBESOLWEIGCommonFiles import (
 )
 
 # remove
-from ..util.misc import saveraster
 from osgeo.gdalconst import *
-from osgeo import gdal, osr
 
 
 def annulus_weight(altitude, aziinterval, device):
@@ -235,7 +232,7 @@ def svfForProcessing153(
             wall2d_id,
             voxel_height,
         ) = svfv.wallscheme_prepare(
-            dsm, scale, pixel_resolution, feedback, device=device
+            dsm, scale, pixel_resolution, feedback, device
         )
 
         # Rasters to fill with values in loop
@@ -250,8 +247,6 @@ def svfForProcessing153(
         )
     else:
         voxelTable = 0
-        allbuildIDSeen = 0
-        allvoxelHeight = 0
         all_voxelId = 0
         walls = 0
 
@@ -264,87 +259,73 @@ def svfForProcessing153(
             index = index + 1
     aziintervalaniso = torch.ceil(aziinterval / 2.0)
     index = 0
-    for i in range(0, skyvaultaltint.shape[0]):
-        for j in range(0, int(aziinterval[int(i)].item())):
+
+    # 1. Pre-extract PyTorch values to CPU numpy arrays/lists BEFORE the loop.
+    # This eliminates thousands of .item() stalls inside the loops.
+    skyvault_items = skyvaultaltint.cpu().numpy()
+    azi_items = aziinterval.cpu().numpy().astype(int)
+    iazimuth_items = iazimuth.cpu().numpy()
+    annulino_items = annulino.cpu().numpy().astype(int)
+    azi_aniso_items = aziintervalaniso.cpu().numpy()
+
+    # Calculate total iterations for progress tracking
+    total_iterations = int(azi_items.sum())
+
+    index = 0
+    feedback.setProgress(0)
+
+    for i in range(skyvaultaltint.shape[0]):
+        # Use the pre-extracted scalar value
+        num_j = azi_items[i]
+        
+        # Pre-fetch the unique altitude scalar for this 'i' loop
+        alt_val = float(skyvault_items[i])
+        altitude = torch.tensor(alt_val, device=device, dtype=torch.float32)
+        
+        # Pre-fetch indices for the k-loops to avoid recalculating bounds
+        k_start = annulino_items[i] + 1
+        k_end = annulino_items[i + 1] + 1
+        
+        for j in range(num_j):
             if feedback.isCanceled():
                 feedback.setProgressText("Calculation cancelled")
                 break
-            altitude = torch.tensor(
-                float(skyvaultaltint[int(i)].item()), device=device
-            )
-            azimuth = torch.tensor(
-                float(iazimuth[int(index)].item()), device=device
-            )
+                
+            # Use pre-extracted scalar for azimuth
+            az_val = float(iazimuth_items[index])
+            azimuth = torch.tensor(az_val, device=device, dtype=torch.float32)
 
-            # Casting shadow
+            # --- Casting shadow ---
             if wallScheme:
-                if usevegdem == 1:
-                    (
-                        vegsh,
-                        sh,
-                        vbshvegsh,
-                        wallsh,
-                        wallsun,
-                        wallshve,
-                        facesh,
-                        facesun,
-                    ) = shbv.shadowingfunction_wallheight_23(
-                        dsm,
-                        vegdem,
-                        vegdem2,
-                        azimuth,
-                        altitude,
-                        scale,
-                        amaxvalue,
-                        bush,
-                        walls,
-                        aspect * torch.pi / 180,
-                    )
-                    vegshmat[:, :, index] = vegsh
-                    vbshvegshmat[:, :, index] = vbshvegsh
-                else:
-                    sh, wallsh, wallsun, facesh, facesun = (
-                        shb.shadowingfunction_wallheight_13(
-                            dsm,
-                            azimuth,
-                            altitude,
-                            scale,
-                            walls,
-                            aspect * torch.pi / 180.0,
-                        )
-                    )
-                    vegsh = torch.ones(
-                        (sh.shape[0], sh.shape[1]),
-                        device=device,
-                        dtype=torch.float32,
-                    )
-                    vbshvegsh = torch.ones(
-                        (sh.shape[0], sh.shape[1]),
-                        device=device,
-                        dtype=torch.float32,
-                    )
-                    vegshmat[:, :, index] = vegsh
-                    vbshvegshmat[:, :, index] = vbshvegsh
-            else:
-                if usevegdem == 1:
-                    shadowresult = shadow.shadowingfunction_20(
-                        dsm,
-                        vegdem,
-                        vegdem2,
-                        azimuth,
-                        altitude,
-                        scale,
-                        amaxvalue,
-                        bush,
-                        feedback,
-                        1,
-                        device,
-                    )
 
-                    vegsh = torch.tensor(shadowresult["vegsh"], device=device)
-                    vbshvegsh = torch.tensor(
-                        shadowresult["vbshvegsh"], device=device
+                if usevegdem == 1:
+
+                    (
+                        vegsh, sh, vbshvegsh, _, _, _, facesh, _,
+                    ) = shbv.shadowingfunction_wallheight_23(
+                        dsm, vegdem, vegdem2, azimuth, altitude, scale,
+                        amaxvalue, bush, walls, aspect * torch.pi / 180, device
                     )
+                    vegshmat[:, :, index] = vegsh
+                    vbshvegshmat[:, :, index] = vbshvegsh
+
+                else:
+                    sh, _, _, facesh, _ = shb.shadowingfunction_wallheight_13(
+                        dsm, azimuth, altitude, scale, walls, aspect * torch.pi / 180.0, device
+                    )
+                    # Inplace assignments or direct broadcast to save memory overhead
+                    vegshmat[:, :, index] = 1.0
+                    vbshvegshmat[:, :, index] = 1.0
+            else:
+
+                if usevegdem == 1:
+
+                    shadowresult = shadow.shadowingfunction_20(
+                        dsm, vegdem, vegdem2, azimuth, altitude, scale,
+                        amaxvalue, bush, feedback, 1, device,
+                    )
+                    vegsh = torch.tensor(shadowresult["vegsh"], device=device)
+                    vbshvegsh = torch.tensor(shadowresult["vbshvegsh"], device=device)
                     vegshmat[:, :, index] = vegsh
                     vbshvegshmat[:, :, index] = vbshvegsh
                     sh = torch.tensor(shadowresult["sh"], device=device)
@@ -355,71 +336,70 @@ def svfForProcessing153(
 
             shmat[:, :, index] = sh
 
-            # Wall temperature scheme, i.e. finding out which voxel is seen from each pixel, where direction is patch azimuth and altitude
+
+            # --- Wall temperature scheme ---
             if wallScheme:
                 (
                     all_buildIDSeen[:, :, index],
                     all_voxelHeight[:, :, index],
                     all_voxelId[:, :, index],
                 ) = shadow.shadowingfunction_findwallID(
-                    dsm,
-                    azimuth,
-                    altitude,
-                    scale,
-                    walls,
-                    uniqueWallIDs,
-                    demlayer,
-                    wall2d_id,
-                    voxel_height,
-                    voxelId_list,
-                    facesh,
-                    wall_dict,
-                    sh,
-                    device,
+                    dsm, azimuth, altitude, scale, walls, uniqueWallIDs, demlayer,
+                    wall2d_id, voxel_height, voxelId_list, facesh, wall_dict, sh, device,
                 )
 
-            # Calculate svfs
-            for k in range(
-                int(annulino[int(i)].item()) + 1,
-                int(annulino[int(i + 1.0)].item()) + 1,
-            ):
 
-                weight = annulus_weight(k, aziinterval[i], device) * sh
-                svf = svf + weight
-                weight = annulus_weight(k, aziintervalaniso[i], device) * sh
-                if (azimuth >= 0) and (azimuth < 180):
-                    svfE = svfE + weight
-                if (azimuth >= 90) and (azimuth < 270):
-                    svfS = svfS + weight
-                if (azimuth >= 180) and (azimuth < 360):
-                    svfW = svfW + weight
-                if (azimuth >= 270) or (azimuth < 90):
-                    svfN = svfN + weight
+            # --- Directional Logic (Pre-calculated boolean flags) ---
+            # Evaluate direction checks once on the CPU scalar instead of tensor logic
+            is_E = (az_val >= 0) and (az_val < 180)
+            is_S = (az_val >= 90) and (az_val < 270)
+            is_W = (az_val >= 180) and (az_val < 360)
+            is_N = (az_val >= 270) or (az_val < 90)
+
+            # --- Calculate SVFs ---
+            # Cache repetitive array evaluations
+            azi_i = azi_items[i]
+            azi_aniso_i = azi_aniso_items[i]
+
+            for k in range(k_start, k_end):
+                # Pass pre-extracted integers/scalars directly to weight function
+                weight = annulus_weight(k, azi_i, device) * sh
+                svf += weight
+                
+                weight_aniso = annulus_weight(k, azi_i, device) * sh
+                if is_E: svfE += weight_aniso
+                if is_S: svfS += weight_aniso
+                if is_W: svfW += weight_aniso
+                if is_N: svfN += weight_aniso
 
             if usevegdem == 1:
-                for k in torch.arange(
-                    annulino[int(i)] + 1, (annulino[int(i + 1.0)]) + 1
-                ):
-                    # % changed to include 90
-                    weight = annulus_weight(k, aziinterval[i], device)
-                    svfveg = svfveg + weight * vegsh
-                    svfaveg = svfaveg + weight * vbshvegsh
-                    weight = annulus_weight(k, aziintervalaniso[i], device)
-                    if (azimuth >= 0) and (azimuth < 180):
-                        svfEveg = svfEveg + weight * vegsh
-                        svfEaveg = svfEaveg + weight * vbshvegsh
-                    if (azimuth >= 90) and (azimuth < 270):
-                        svfSveg = svfSveg + weight * vegsh
-                        svfSaveg = svfSaveg + weight * vbshvegsh
-                    if (azimuth >= 180) and (azimuth < 360):
-                        svfWveg = svfWveg + weight * vegsh
-                        svfWaveg = svfWaveg + weight * vbshvegsh
-                    if (azimuth >= 270) or (azimuth < 90):
-                        svfNveg = svfNveg + weight * vegsh
-                        svfNaveg = svfNaveg + weight * vbshvegsh
+                for k in range(k_start, k_end):
+                    weight = annulus_weight(k, azi_i, device)
+                    w_vegsh = weight * vegsh
+                    w_vbshvegsh = weight * vbshvegsh
+                    
+                    svfveg += w_vegsh
+                    svfaveg += w_vbshvegsh
+                    
+                    weight_aniso = annulus_weight(k, azi_aniso_i, device)
+                    w_aniso_vegsh = weight_aniso * vegsh
+                    w_aniso_vbshvegsh = weight_aniso * vbshvegsh
+                    
+                    if is_E:
+                        svfEveg += w_aniso_vegsh
+                        svfEaveg += w_aniso_vbshvegsh
+                    if is_S:
+                        svfSveg += w_aniso_vegsh
+                        svfSaveg += w_aniso_vbshvegsh
+                    if is_W:
+                        svfWveg += w_aniso_vegsh
+                        svfWaveg += w_aniso_vbshvegsh
+                    if is_N:
+                        svfNveg += w_aniso_vegsh
+                        svfNaveg += w_aniso_vbshvegsh
 
             index += 1
-            feedback.setProgress(int(index * (100.0 / torch.sum(aziinterval))))
+            feedback.setProgress(int(index * (100.0 / total_iterations)))
 
     svfS = svfS + 3.0459e-004
     svfW = svfW + 3.0459e-004
@@ -474,6 +454,7 @@ def svfForProcessing153(
         "walls": walls,
     }
 
+
     # ,
     # 'vbshvegshmat': vbshvegshmat, 'wallshmat': wallshmat, 'wallsunmat': wallsunmat,
     # 'wallshvemat': wallshvemat, 'facesunmat': facesunmat}
@@ -490,11 +471,8 @@ def svfForProcessing655(
     device=torch.device("cpu"),
 ):
     if device is None:
-        device = (
-            torch.device("cuda")
-            if torch.cuda.is_available()
-            else torch.device("cpu")
-        )
+        device = torch.device("cpu")
+        
     dsm = _to_tensor(dsm, device)
     vegdem = _to_tensor(vegdem, device)
     vegdem2 = _to_tensor(vegdem2, device)

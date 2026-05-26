@@ -235,155 +235,155 @@ class ProcessingSkyViewFactorAlgorithm(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
-        # InputParameters
-        outputDir = self.parameterAsString(
-            parameters, self.OUTPUT_DIR, context
-        )
-        outputFile = self.parameterAsOutputLayer(
-            parameters, self.OUTPUT_FILE, context
-        )
-        dsmlayer = self.parameterAsRasterLayer(
-            parameters, self.INPUT_DSM, context
-        )
-        # useVegdem = self.parameterAsBool(parameters, self.USE_VEG, context)
-        transVeg = self.parameterAsDouble(parameters, self.TRANS_VEG, context)
-        vegdsm = self.parameterAsRasterLayer(
-            parameters, self.INPUT_CDSM, context
-        )
-        vegdsm2 = self.parameterAsRasterLayer(
-            parameters, self.INPUT_TDSM, context
-        )
-        # tdsmExists = self.parameterAsBool(parameters, self.TSDM_EXIST, context)
-        trunkr = self.parameterAsDouble(
-            parameters, self.INPUT_THEIGHT, context
-        )
-        aniso = self.parameterAsBool(parameters, self.ANISO, context)
-        use_gpu = self.parameterAsBool(parameters, self.USE_GPU, context)
+        with torch.no_grad():
+            # InputParameters
+            outputDir = self.parameterAsString(
+                parameters, self.OUTPUT_DIR, context
+            )
+            outputFile = self.parameterAsOutputLayer(
+                parameters, self.OUTPUT_FILE, context
+            )
+            dsmlayer = self.parameterAsRasterLayer(
+                parameters, self.INPUT_DSM, context
+            )
+            # useVegdem = self.parameterAsBool(parameters, self.USE_VEG, context)
+            transVeg = self.parameterAsDouble(parameters, self.TRANS_VEG, context)
+            vegdsm = self.parameterAsRasterLayer(
+                parameters, self.INPUT_CDSM, context
+            )
+            vegdsm2 = self.parameterAsRasterLayer(
+                parameters, self.INPUT_TDSM, context
+            )
+            # tdsmExists = self.parameterAsBool(parameters, self.TSDM_EXIST, context)
+            trunkr = self.parameterAsDouble(
+                parameters, self.INPUT_THEIGHT, context
+            )
+            aniso = self.parameterAsBool(parameters, self.ANISO, context)
+            use_gpu = self.parameterAsBool(parameters, self.USE_GPU, context)
 
-        # Wall parameterization settings
-        demlayer = self.parameterAsRasterLayer(
-            parameters, self.INPUT_DEM, context
-        )
-        svf_height = self.parameterAsDouble(
-            parameters, self.INPUT_SVFHEIGHT, context
-        )
+            # Wall parameterization settings
+            demlayer = self.parameterAsRasterLayer(
+                parameters, self.INPUT_DEM, context
+            )
+            svf_height = self.parameterAsDouble(
+                parameters, self.INPUT_SVFHEIGHT, context
+            )
 
-        kmeans = self.parameterAsBool(
-            parameters, self.KMEANS, context
-        )  # If K-means will be used or not (true or false)
-        clusters = (
-            self.parameterAsInt(parameters, self.CLUSTERS, context) + 1
-        )  # + 1 because ground areas will be one cluster when dsm - dem
-        wallScheme = self.parameterAsBool(
-            parameters, self.WALL_SCHEME, context
-        )
+            kmeans = self.parameterAsBool(
+                parameters, self.KMEANS, context
+            )  # If K-means will be used or not (true or false)
+            clusters = (
+                self.parameterAsInt(parameters, self.CLUSTERS, context) + 1
+            )  # + 1 because ground areas will be one cluster when dsm - dem
+            wallScheme = self.parameterAsBool(
+                parameters, self.WALL_SCHEME, context
+            )
 
-        feedback.setProgressText("Initiating algorithm")
+            feedback.setProgressText("Initiating algorithm")
 
-        if parameters["OUTPUT_DIR"] == "TEMPORARY_OUTPUT":
-            if not (os.path.isdir(outputDir)):
-                os.mkdir(outputDir)
+            if parameters["OUTPUT_DIR"] == "TEMPORARY_OUTPUT":
+                if not (os.path.isdir(outputDir)):
+                    os.mkdir(outputDir)
 
-        device = torch.device("cpu")
-        if use_gpu and torch.cuda.is_available():
-            device = torch.device("cuda")
+            device = torch.device("cpu")
+            if use_gpu and torch.cuda.is_available():
+                device = torch.device("cuda")
 
-        provider = dsmlayer.dataProvider()
-        filepath_dsm = str(provider.dataSourceUri())
-        gdal_dsm = gdal.Open(filepath_dsm)
-        dsm = gdal_dsm.ReadAsArray().astype(float)
+            provider = dsmlayer.dataProvider()
+            filepath_dsm = str(provider.dataSourceUri())
+            gdal_dsm = gdal.Open(filepath_dsm)
+            dsm = gdal_dsm.ReadAsArray().astype(float)
 
-        # response to issue #85
-        nd = gdal_dsm.GetRasterBand(1).GetNoDataValue()
-        dsm[dsm == nd] = 0.0
-        if dsm.min() < 0:
-            dsm = dsm + np.abs(dsm.min())
+            # response to issue #85
+            nd = gdal_dsm.GetRasterBand(1).GetNoDataValue()
+            dsm[dsm == nd] = 0.0
+            if dsm.min() < 0:
+                dsm = dsm + np.abs(dsm.min())
 
-        sizex = dsm.shape[0]
-        sizey = dsm.shape[1]
+            sizex = dsm.shape[0]
+            sizey = dsm.shape[1]
 
-        geotransform = gdal_dsm.GetGeoTransform()
-        pixel_resolution = geotransform[1]
-        scale = torch.tensor(1 / pixel_resolution, device=device)
+            geotransform = gdal_dsm.GetGeoTransform()
+            pixel_resolution = geotransform[1]
+            scale = torch.tensor(1 / pixel_resolution, device=device)
 
-        if wallScheme:
-            # Load DEM layer if calculating exact SVFs for wall surface temperature scheme
-            if demlayer:
-                provider = demlayer.dataProvider()
-                filepath_dem = str(provider.dataSourceUri())
-                gdal_dem = gdal.Open(filepath_dem)
-                dem = gdal_dem.ReadAsArray().astype(float)
+            if wallScheme:
+                # Load DEM layer if calculating exact SVFs for wall surface temperature scheme
+                if demlayer:
+                    provider = demlayer.dataProvider()
+                    filepath_dem = str(provider.dataSourceUri())
+                    gdal_dem = gdal.Open(filepath_dem)
+                    dem = gdal_dem.ReadAsArray().astype(float)
 
-                demsizex = dem.shape[0]
-                demsizey = dem.shape[1]
+                    demsizex = dem.shape[0]
+                    demsizey = dem.shape[1]
 
-                if not (demsizex == sizex) & (demsizey == sizey):
+                    if not (demsizex == sizex) & (demsizey == sizey):
+                        raise QgsProcessingException(
+                            "Error in DEM: All rasters must be of same extent and resolution"
+                        )
+                else:
                     raise QgsProcessingException(
-                        "Error in DEM: All rasters must be of same extent and resolution"
+                        "DEM layer required for wall surface scheme!"
                     )
             else:
-                raise QgsProcessingException(
-                    "DEM layer required for wall surface scheme!"
-                )
-        else:
-            dem = None
+                dem = None
 
-        trans = transVeg / 100.0
+            trans = transVeg / 100.0
 
-        if vegdsm:
-            usevegdem = 1
-            feedback.setProgressText("Vegetation scheme activated")
-            # vegdsm = self.parameterAsRasterLayer(parameters, self.INPUT_CDSM, context)
-            # if vegdsm is None:
-            # raise QgsProcessingException("Error: No valid vegetation DSM selected")
-
-            # load raster
-            gdal.AllRegister()
-            provider = vegdsm.dataProvider()
-            filePathOld = str(provider.dataSourceUri())
-            dataSet = gdal.Open(filePathOld)
-            vegdsm = dataSet.ReadAsArray().astype(float)
-
-            vegsizex = vegdsm.shape[0]
-            vegsizey = vegdsm.shape[1]
-
-            if not (vegsizex == sizex) & (vegsizey == sizey):
-                raise QgsProcessingException(
-                    "Error in Vegetation Canopy DSM: All rasters must be of same extent and resolution"
-                )
-
-            if vegdsm2:
-                # vegdsm2 = self.parameterAsRasterLayer(parameters, self.INPUT_TDSM, context)
-                # if vegdsm2 is None:
-                # raise QgsProcessingException("Error: No valid Trunk zone DSM selected")
+            if vegdsm:
+                usevegdem = 1
+                feedback.setProgressText("Vegetation scheme activated")
+                # vegdsm = self.parameterAsRasterLayer(parameters, self.INPUT_CDSM, context)
+                # if vegdsm is None:
+                # raise QgsProcessingException("Error: No valid vegetation DSM selected")
 
                 # load raster
                 gdal.AllRegister()
-                provider = vegdsm2.dataProvider()
+                provider = vegdsm.dataProvider()
                 filePathOld = str(provider.dataSourceUri())
                 dataSet = gdal.Open(filePathOld)
-                vegdsm2 = dataSet.ReadAsArray().astype(float)
+                vegdsm = dataSet.ReadAsArray().astype(float)
+
+                vegsizex = vegdsm.shape[0]
+                vegsizey = vegdsm.shape[1]
+
+                if not (vegsizex == sizex) & (vegsizey == sizey):
+                    raise QgsProcessingException(
+                        "Error in Vegetation Canopy DSM: All rasters must be of same extent and resolution"
+                    )
+
+                if vegdsm2:
+                    # vegdsm2 = self.parameterAsRasterLayer(parameters, self.INPUT_TDSM, context)
+                    # if vegdsm2 is None:
+                    # raise QgsProcessingException("Error: No valid Trunk zone DSM selected")
+
+                    # load raster
+                    gdal.AllRegister()
+                    provider = vegdsm2.dataProvider()
+                    filePathOld = str(provider.dataSourceUri())
+                    dataSet = gdal.Open(filePathOld)
+                    vegdsm2 = dataSet.ReadAsArray().astype(float)
+                else:
+                    trunkratio = trunkr / 100.0
+                    vegdsm2 = vegdsm * trunkratio
+
+                vegsizex = vegdsm2.shape[0]
+                vegsizey = vegdsm2.shape[1]
+
+                if not (vegsizex == sizex) & (vegsizey == sizey):
+                    raise QgsProcessingException(
+                        "Error in Trunk Zone DSM: All rasters must be of same extent and resolution"
+                    )
             else:
-                trunkratio = trunkr / 100.0
-                vegdsm2 = vegdsm * trunkratio
+                rows = dsm.shape[0]
+                cols = dsm.shape[1]
+                vegdsm = torch.zeros([rows, cols], device=device)
+                vegdsm2 = 0.0
+                usevegdem = 0
 
-            vegsizex = vegdsm2.shape[0]
-            vegsizey = vegdsm2.shape[1]
-
-            if not (vegsizex == sizex) & (vegsizey == sizey):
-                raise QgsProcessingException(
-                    "Error in Trunk Zone DSM: All rasters must be of same extent and resolution"
-                )
-        else:
-            rows = dsm.shape[0]
-            cols = dsm.shape[1]
-            vegdsm = torch.zeros([rows, cols], device=device)
-            vegdsm2 = 0.0
-            usevegdem = 0
-
-        if aniso == 1:
-            feedback.setProgressText("Calculating SVF using 153 iterations")
-            with torch.no_grad(): 
+            if aniso == 1:
+                feedback.setProgressText("Calculating SVF using 153 iterations")
 
                 ret = svf.svfForProcessing153(
                     dsm,
@@ -398,57 +398,55 @@ class ProcessingSkyViewFactorAlgorithm(QgsProcessingAlgorithm):
                     device=device,
                 )
 
-        else:
-            feedback.setProgressText("Calculating SVF using 655 iterations")
-            with torch.no_grad(): 
+            else:
+                feedback.setProgressText("Calculating SVF using 655 iterations")
 
                 ret = svf.svfForProcessing655(
                     dsm, vegdsm, vegdsm2, scale, usevegdem, feedback, device=device
                 )
 
-        # print('Time to finish first SVF calculation = ' + str(run_time))
-        if wallScheme == 1:
-            voxelTable = ret["voxelTable"]
-            voxelTable = voxelTable[
-                voxelTable[:, 2] != 0, :
-            ]  # Remove where wall height is zero, i.e. there is no wall...
-            wallHeights = ret["walls"]
-            svfbu = ret["svf"]
-            if usevegdem == 0:
-                svftotal = svfbu
-                svfveg = ret["svfveg"]
-                svfaveg = ret["svfaveg"]
-            else:
-                svfveg = ret["svfveg"]
-                svfaveg = ret["svfaveg"]
-                trans = transVeg / 100.0
-                svftotal = svfbu - (1 - svfveg) * (1 - trans)
-            # Lägg till loop för att lägga till i tabellen
-            svf_array = torch.zeros((voxelTable.shape[0]), device=device)
-            svf_height_array = torch.zeros(
-                (voxelTable.shape[0]), device=device
-            )
-            svfbu_array = torch.zeros((voxelTable.shape[0]), device=device)
-            svfveg_array = torch.zeros((voxelTable.shape[0]), device=device)
-            svfaveg_array = torch.zeros((voxelTable.shape[0]), device=device)
-            voxel_y = torch.where(voxelTable[:, 1] == svf_height)
-            for temp_y in voxel_y[0]:
-                svf_array[temp_y] = svftotal[
-                    int(voxelTable[temp_y, 5]), int(voxelTable[temp_y, 6])
-                ]
-                svfbu_array[temp_y] = svfbu[
-                    int(voxelTable[temp_y, 5]), int(voxelTable[temp_y, 6])
-                ]
-                svfveg_array[temp_y] = svfveg[
-                    int(voxelTable[temp_y, 5]), int(voxelTable[temp_y, 6])
-                ]
-                svfaveg_array[temp_y] = svfaveg[
-                    int(voxelTable[temp_y, 5]), int(voxelTable[temp_y, 6])
-                ]
-                svf_height_array[temp_y] = svf_height
+            # print('Time to finish first SVF calculation = ' + str(run_time))
+            if wallScheme == 1:
+                voxelTable = ret["voxelTable"]
+                voxelTable = voxelTable[
+                    voxelTable[:, 2] != 0, :
+                ]  # Remove where wall height is zero, i.e. there is no wall...
+                wallHeights = ret["walls"]
+                svfbu = ret["svf"]
+                if usevegdem == 0:
+                    svftotal = svfbu
+                    svfveg = ret["svfveg"]
+                    svfaveg = ret["svfaveg"]
+                else:
+                    svfveg = ret["svfveg"]
+                    svfaveg = ret["svfaveg"]
+                    trans = transVeg / 100.0
+                    svftotal = svfbu - (1 - svfveg) * (1 - trans)
+                # Lägg till loop för att lägga till i tabellen
+                svf_array = torch.zeros((voxelTable.shape[0]), device=device)
+                svf_height_array = torch.zeros(
+                    (voxelTable.shape[0]), device=device
+                )
+                svfbu_array = torch.zeros((voxelTable.shape[0]), device=device)
+                svfveg_array = torch.zeros((voxelTable.shape[0]), device=device)
+                svfaveg_array = torch.zeros((voxelTable.shape[0]), device=device)
+                voxel_y = torch.where(voxelTable[:, 1] == svf_height)
+                for temp_y in voxel_y[0]:
+                    svf_array[temp_y] = svftotal[
+                        int(voxelTable[temp_y, 5]), int(voxelTable[temp_y, 6])
+                    ]
+                    svfbu_array[temp_y] = svfbu[
+                        int(voxelTable[temp_y, 5]), int(voxelTable[temp_y, 6])
+                    ]
+                    svfveg_array[temp_y] = svfveg[
+                        int(voxelTable[temp_y, 5]), int(voxelTable[temp_y, 6])
+                    ]
+                    svfaveg_array[temp_y] = svfaveg[
+                        int(voxelTable[temp_y, 5]), int(voxelTable[temp_y, 6])
+                    ]
+                    svf_height_array[temp_y] = svf_height
 
-            if kmeans:
-                with torch.no_grad(): 
+                if kmeans:
 
                     voxelTable, cluster_heights = svfv.svf_kmeans(
                         dsm,
@@ -474,17 +472,16 @@ class ProcessingSkyViewFactorAlgorithm(QgsProcessingAlgorithm):
 
                     # Interpolate for voxels where SVF has not been calculated
                     voxelTable = svfv.interpolate_svf(
-                        voxelTable, cluster_heights, kmeans
+                        voxelTable
                     )
 
-            # Loop for exact SVF at heights (increase DEM)
-            # if demlayer:
-            else:
-                feedback.setProgressText(
-                    "Calculating SVF for wall surface temperature parameterization"
-                )
-                
-                with torch.no_grad(): 
+                # Loop for exact SVF at heights (increase DEM)
+                # if demlayer:
+                else:
+                    feedback.setProgressText(
+                        "Calculating SVF for wall surface temperature parameterization"
+                    )
+                    
 
                     voxelTable = svfv.svf_for_voxels(
                         dsm,
@@ -506,211 +503,211 @@ class ProcessingSkyViewFactorAlgorithm(QgsProcessingAlgorithm):
                         device=device,
                     )
 
-                # Remove rows where svfbu, sfveg and svfaveg is zero
-                if usevegdem == 1:
-                    voxelTable = voxelTable[
-                        (
-                            (voxelTable[:, -3] > 0.0)
-                            & (voxelTable[:, -2] > 0.0)
-                            & (voxelTable[:, -1] > 0.0)
-                        ),
-                        :,
-                    ]
-                else:
-                    voxelTable = voxelTable[((voxelTable[:, -3] > 0.0)), :]
+                    # Remove rows where svfbu, sfveg and svfaveg is zero
+                    if usevegdem == 1:
+                        voxelTable = voxelTable[
+                            (
+                                (voxelTable[:, -3] > 0.0)
+                                & (voxelTable[:, -2] > 0.0)
+                                & (voxelTable[:, -1] > 0.0)
+                            ),
+                            :,
+                        ]
+                    else:
+                        voxelTable = voxelTable[((voxelTable[:, -3] > 0.0)), :]
 
-            # Store voxelTable, necessary?
-            ret["voxelTable"] = voxelTable
+                # Store voxelTable, necessary?
+                ret["voxelTable"] = voxelTable
 
-        filename = outputFile
+            filename = outputFile
 
-        # temporary fix for mac, ISSUE #15
-        pf = sys.platform
-        if pf == "darwin" or pf == "linux2" or pf == "linux":
-            if not os.path.exists(outputDir):
-                os.makedirs(outputDir)
+            # temporary fix for mac, ISSUE #15
+            pf = sys.platform
+            if pf == "darwin" or pf == "linux2" or pf == "linux":
+                if not os.path.exists(outputDir):
+                    os.makedirs(outputDir)
 
-        if ret is not None:
-            svfbu = ret["svf"]
-            svfbuE = ret["svfE"]
-            svfbuS = ret["svfS"]
-            svfbuW = ret["svfW"]
-            svfbuN = ret["svfN"]
+            if ret is not None:
+                svfbu = ret["svf"]
+                svfbuE = ret["svfE"]
+                svfbuS = ret["svfS"]
+                svfbuW = ret["svfW"]
+                svfbuN = ret["svfN"]
 
-            misc.saveraster(
-                gdal_dsm,
-                outputDir + "/" + "svf.tif",
-                svfbu.cpu().detach().numpy(),
-            )
-            misc.saveraster(
-                gdal_dsm,
-                outputDir + "/" + "svfE.tif",
-                svfbuE.cpu().detach().numpy(),
-            )
-            misc.saveraster(
-                gdal_dsm,
-                outputDir + "/" + "svfS.tif",
-                svfbuS.cpu().detach().numpy(),
-            )
-            misc.saveraster(
-                gdal_dsm,
-                outputDir + "/" + "svfW.tif",
-                svfbuW.cpu().detach().numpy(),
-            )
-            misc.saveraster(
-                gdal_dsm,
-                outputDir + "/" + "svfN.tif",
-                svfbuN.cpu().detach().numpy(),
-            )
+                misc.saveraster_tensor(
+                    gdal_dsm,
+                    outputDir + "/" + "svf.tif",
+                    svfbu,
+                )
+                misc.saveraster_tensor(
+                    gdal_dsm,
+                    outputDir + "/" + "svfE.tif",
+                    svfbuE,
+                )
+                misc.saveraster_tensor(
+                    gdal_dsm,
+                    outputDir + "/" + "svfS.tif",
+                    svfbuS,
+                )
+                misc.saveraster_tensor(
+                    gdal_dsm,
+                    outputDir + "/" + "svfW.tif",
+                    svfbuW,
+                )
+                misc.saveraster_tensor(
+                    gdal_dsm,
+                    outputDir + "/" + "svfN.tif",
+                    svfbuN,
+                )
 
-            if os.path.isfile(outputDir + "/" + "svfs.zip"):
-                os.remove(outputDir + "/" + "svfs.zip")
-
-            zippo = zipfile.ZipFile(outputDir + "/" + "svfs.zip", "a")
-            zippo.write(outputDir + "/" + "svf.tif", "svf.tif")
-            zippo.write(outputDir + "/" + "svfE.tif", "svfE.tif")
-            zippo.write(outputDir + "/" + "svfS.tif", "svfS.tif")
-            zippo.write(outputDir + "/" + "svfW.tif", "svfW.tif")
-            zippo.write(outputDir + "/" + "svfN.tif", "svfN.tif")
-            zippo.close()
-
-            os.remove(outputDir + "/" + "svf.tif")
-            os.remove(outputDir + "/" + "svfE.tif")
-            os.remove(outputDir + "/" + "svfS.tif")
-            os.remove(outputDir + "/" + "svfW.tif")
-            os.remove(outputDir + "/" + "svfN.tif")
-
-            if usevegdem == 0:
-                svftotal = svfbu
-            else:
-                # report the result
-                svfveg = ret["svfveg"]
-                svfEveg = ret["svfEveg"]
-                svfSveg = ret["svfSveg"]
-                svfWveg = ret["svfWveg"]
-                svfNveg = ret["svfNveg"]
-                svfaveg = ret["svfaveg"]
-                svfEaveg = ret["svfEaveg"]
-                svfSaveg = ret["svfSaveg"]
-                svfWaveg = ret["svfWaveg"]
-                svfNaveg = ret["svfNaveg"]
-
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfveg.tif",
-                    svfveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfEveg.tif",
-                    svfEveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfSveg.tif",
-                    svfSveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfWveg.tif",
-                    svfWveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfNveg.tif",
-                    svfNveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfaveg.tif",
-                    svfaveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfEaveg.tif",
-                    svfEaveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfSaveg.tif",
-                    svfSaveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfWaveg.tif",
-                    svfWaveg.cpu().detach().numpy(),
-                )
-                misc.saveraster(
-                    gdal_dsm,
-                    outputDir + "/" + "svfNaveg.tif",
-                    svfNaveg.cpu().detach().numpy(),
-                )
+                if os.path.isfile(outputDir + "/" + "svfs.zip"):
+                    os.remove(outputDir + "/" + "svfs.zip")
 
                 zippo = zipfile.ZipFile(outputDir + "/" + "svfs.zip", "a")
-                zippo.write(outputDir + "/" + "svfveg.tif", "svfveg.tif")
-                zippo.write(outputDir + "/" + "svfEveg.tif", "svfEveg.tif")
-                zippo.write(outputDir + "/" + "svfSveg.tif", "svfSveg.tif")
-                zippo.write(outputDir + "/" + "svfWveg.tif", "svfWveg.tif")
-                zippo.write(outputDir + "/" + "svfNveg.tif", "svfNveg.tif")
-                zippo.write(outputDir + "/" + "svfaveg.tif", "svfaveg.tif")
-                zippo.write(outputDir + "/" + "svfEaveg.tif", "svfEaveg.tif")
-                zippo.write(outputDir + "/" + "svfSaveg.tif", "svfSaveg.tif")
-                zippo.write(outputDir + "/" + "svfWaveg.tif", "svfWaveg.tif")
-                zippo.write(outputDir + "/" + "svfNaveg.tif", "svfNaveg.tif")
+                zippo.write(outputDir + "/" + "svf.tif", "svf.tif")
+                zippo.write(outputDir + "/" + "svfE.tif", "svfE.tif")
+                zippo.write(outputDir + "/" + "svfS.tif", "svfS.tif")
+                zippo.write(outputDir + "/" + "svfW.tif", "svfW.tif")
+                zippo.write(outputDir + "/" + "svfN.tif", "svfN.tif")
                 zippo.close()
 
-                os.remove(outputDir + "/" + "svfveg.tif")
-                os.remove(outputDir + "/" + "svfEveg.tif")
-                os.remove(outputDir + "/" + "svfSveg.tif")
-                os.remove(outputDir + "/" + "svfWveg.tif")
-                os.remove(outputDir + "/" + "svfNveg.tif")
-                os.remove(outputDir + "/" + "svfaveg.tif")
-                os.remove(outputDir + "/" + "svfEaveg.tif")
-                os.remove(outputDir + "/" + "svfSaveg.tif")
-                os.remove(outputDir + "/" + "svfWaveg.tif")
-                os.remove(outputDir + "/" + "svfNaveg.tif")
+                os.remove(outputDir + "/" + "svf.tif")
+                os.remove(outputDir + "/" + "svfE.tif")
+                os.remove(outputDir + "/" + "svfS.tif")
+                os.remove(outputDir + "/" + "svfW.tif")
+                os.remove(outputDir + "/" + "svfN.tif")
 
-                trans = transVeg / 100.0
-                svftotal = svfbu - (1 - svfveg) * (1 - trans)
+                if usevegdem == 0:
+                    svftotal = svfbu
+                else:
+                    # report the result
+                    svfveg = ret["svfveg"]
+                    svfEveg = ret["svfEveg"]
+                    svfSveg = ret["svfSveg"]
+                    svfWveg = ret["svfWveg"]
+                    svfNveg = ret["svfNveg"]
+                    svfaveg = ret["svfaveg"]
+                    svfEaveg = ret["svfEaveg"]
+                    svfSaveg = ret["svfSaveg"]
+                    svfWaveg = ret["svfWaveg"]
+                    svfNaveg = ret["svfNaveg"]
 
-            misc.saveraster(
-                gdal_dsm, filename, svftotal.cpu().detach().numpy()
-            )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfveg.tif",
+                        svfveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfEveg.tif",
+                        svfEveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfSveg.tif",
+                        svfSveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfWveg.tif",
+                        svfWveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfNveg.tif",
+                        svfNveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfaveg.tif",
+                        svfaveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfEaveg.tif",
+                        svfEaveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfSaveg.tif",
+                        svfSaveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfWaveg.tif",
+                        svfWaveg,
+                    )
+                    misc.saveraster_tensor(
+                        gdal_dsm,
+                        outputDir + "/" + "svfNaveg.tif",
+                        svfNaveg,
+                    )
 
-            # Save shadow images for SOLWEIG 2019a
-            if aniso == 1:
-                shmat = ret["shmat"]
-                vegshmat = ret["vegshmat"]
-                vbshvegshmat = ret["vbshvegshmat"]
-                # wallshmat = ret["wallshmat"]
-                # wallsunmat = ret["wallsunmat"]
-                # wallshvemat = ret["wallshvemat"]
-                # facesunmat = ret["facesunmat"]
+                    zippo = zipfile.ZipFile(outputDir + "/" + "svfs.zip", "a")
+                    zippo.write(outputDir + "/" + "svfveg.tif", "svfveg.tif")
+                    zippo.write(outputDir + "/" + "svfEveg.tif", "svfEveg.tif")
+                    zippo.write(outputDir + "/" + "svfSveg.tif", "svfSveg.tif")
+                    zippo.write(outputDir + "/" + "svfWveg.tif", "svfWveg.tif")
+                    zippo.write(outputDir + "/" + "svfNveg.tif", "svfNveg.tif")
+                    zippo.write(outputDir + "/" + "svfaveg.tif", "svfaveg.tif")
+                    zippo.write(outputDir + "/" + "svfEaveg.tif", "svfEaveg.tif")
+                    zippo.write(outputDir + "/" + "svfSaveg.tif", "svfSaveg.tif")
+                    zippo.write(outputDir + "/" + "svfWaveg.tif", "svfWaveg.tif")
+                    zippo.write(outputDir + "/" + "svfNaveg.tif", "svfNaveg.tif")
+                    zippo.close()
 
-                np.savez_compressed(
-                    outputDir + "/" + "shadowmats.npz",
-                    shadowmat=shmat.cpu().detach().numpy(),
-                    vegshadowmat=vegshmat.cpu().detach().numpy(),
-                    vbshmat=vbshvegshmat.cpu().detach().numpy(),
-                )  # ,
-                # vbshvegshmat=vbshvegshmat, wallshmat=wallshmat, wallsunmat=wallsunmat,
-                # facesunmat=facesunmat, wallshvemat=wallshvemat)
+                    os.remove(outputDir + "/" + "svfveg.tif")
+                    os.remove(outputDir + "/" + "svfEveg.tif")
+                    os.remove(outputDir + "/" + "svfSveg.tif")
+                    os.remove(outputDir + "/" + "svfWveg.tif")
+                    os.remove(outputDir + "/" + "svfNveg.tif")
+                    os.remove(outputDir + "/" + "svfaveg.tif")
+                    os.remove(outputDir + "/" + "svfEaveg.tif")
+                    os.remove(outputDir + "/" + "svfSaveg.tif")
+                    os.remove(outputDir + "/" + "svfWaveg.tif")
+                    os.remove(outputDir + "/" + "svfNaveg.tif")
 
-            if wallScheme == 1:
-                voxelId = ret["voxelIds"]
-                voxelTable = ret["voxelTable"]
+                    trans = transVeg / 100.0
+                    svftotal = svfbu - (1 - svfveg) * (1 - trans)
 
-                np.savez_compressed(
-                    outputDir + "/" + "wallScheme.npz",
-                    voxelId=voxelId.cpu().detach().numpy(),
-                    voxelTable=voxelTable.cpu().detach().numpy(),
+                misc.saveraster_tensor(
+                    gdal_dsm, filename, svftotal
                 )
 
-        feedback.setProgressText(
-            "Sky View Factor: SVF grid(s) successfully generated"
-        )
+                # Save shadow images for SOLWEIG 2019a
+                if aniso == 1:
+                    shmat = ret["shmat"]
+                    vegshmat = ret["vegshmat"]
+                    vbshvegshmat = ret["vbshvegshmat"]
+                    # wallshmat = ret["wallshmat"]
+                    # wallsunmat = ret["wallsunmat"]
+                    # wallshvemat = ret["wallshvemat"]
+                    # facesunmat = ret["facesunmat"]
 
-        return {self.OUTPUT_DIR: outputDir, self.OUTPUT_FILE: outputFile}
+                    np.savez_compressed(
+                        outputDir + "/" + "shadowmats.npz",
+                        shadowmat=shmat.cpu().detach().numpy(),
+                        vegshadowmat=vegshmat.cpu().detach().numpy(),
+                        vbshmat=vbshvegshmat.cpu().detach().numpy(),
+                    )  # ,
+                    # vbshvegshmat=vbshvegshmat, wallshmat=wallshmat, wallsunmat=wallsunmat,
+                    # facesunmat=facesunmat, wallshvemat=wallshvemat)
+
+                if wallScheme == 1:
+                    voxelId = ret["voxelIds"]
+                    voxelTable = ret["voxelTable"]
+
+                    np.savez_compressed(
+                        outputDir + "/" + "wallScheme.npz",
+                        voxelId=voxelId.cpu().detach().numpy(),
+                        voxelTable=voxelTable.cpu().detach().numpy(),
+                    )
+
+            feedback.setProgressText(
+                "Sky View Factor: SVF grid(s) successfully generated"
+            )
+
+            return {self.OUTPUT_DIR: outputDir, self.OUTPUT_FILE: outputFile}
 
     def name(self):
         return "Urban Geometry: Sky View Factor"

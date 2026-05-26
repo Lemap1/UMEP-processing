@@ -10,7 +10,6 @@ import torch.nn.functional as F
 
 # import scipy.misc as sc
 import scipy.ndimage as sc
-from scipy.ndimage import maximum_filter
 
 def findwalls_sp(arr_dsm, walllimit, device, footprint=None):
     """
@@ -29,8 +28,6 @@ def findwalls_sp(arr_dsm, walllimit, device, footprint=None):
             [1, 1, 1],
             [0, 1, 0]
         ], device=device)
-    else:
-        footprint = footprint.to(device=device)
 
     fh, fw = footprint.shape
     pad_h, pad_w = fh // 2, fw // 2
