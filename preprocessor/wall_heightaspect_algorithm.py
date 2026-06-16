@@ -156,23 +156,29 @@ class ProcessingWallHeightAscpetAlgorithm(QgsProcessingAlgorithm):
 
             if torch.cuda.is_available():
                 device = torch.device("cuda")
-                feedback.setProgressText(
-                    "PyTorch and GPU found. Initiating GPU mode..."
-                )
+                if feedback is not None:
+
+                    feedback.setProgressText(
+                        "PyTorch and GPU found. Initiating GPU mode..."
+                    )
             elif hasattr(torch, "xpu") and torch.xpu.is_available():
                 device = torch.device("xpu")
-                feedback.setProgressText(
-                    "PyTorch and GPU found. Initiating intel GPU mode..."
-                )
+                if feedback is not None:
+                    feedback.setProgressText(
+                        "PyTorch and GPU found. Initiating intel GPU mode..."
+                    )
             else:
                 device = torch.device("cpu")
-                feedback.setProgressText(
-                    "Pytorch found but GPU not found. Initiating CPU mode..."
-                )
+                if feedback is not None:
+
+                    feedback.setProgressText(
+                        "Pytorch found but GPU not found. Initiating CPU mode..."
+                    )
 
         else:
             # Fall back to standard CPU processing
-            feedback.setProgressText("Running in CPU mode...")
+            if feedback is not None:
+                feedback.setProgressText("Running in CPU mode...")
 
         provider = dsmin.dataProvider()
         filepath_dsm = str(provider.dataSourceUri())

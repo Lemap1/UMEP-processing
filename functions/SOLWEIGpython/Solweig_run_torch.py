@@ -89,9 +89,10 @@ def solweig_run(configPath, feedback):
     device = torch.device("cpu")
     if configDict["calculation_mode"] == "gpu" and torch.cuda.is_available():
         device = torch.device("cuda")
-        feedback.setProgressText(
-            "PyTorch and NVIDIA/AMD GPU found. Initiating CUDA mode..."
-        )
+        if feedback is not None:
+            feedback.setProgressText(
+                "PyTorch and NVIDIA/AMD GPU found. Initiating CUDA mode..."
+            )
 
     elif (
         configDict["calculation_mode"] == "gpu"
@@ -99,14 +100,17 @@ def solweig_run(configPath, feedback):
         and torch.xpu.is_available()
     ):
         device = torch.device("xpu")
-        feedback.setProgressText(
-            "PyTorch and Intel GPU found. Initiating XPU mode..."
-        )
+        if feedback is not None:
+
+            feedback.setProgressText(
+                "PyTorch and Intel GPU found. Initiating XPU mode..."
+            )
 
     else:
-        feedback.setProgressText(
-            "PyTorch found but compatible GPU not found. Initiating CPU mode..."
-        )
+        if feedback is not None:
+            feedback.setProgressText(
+                "PyTorch found but compatible GPU not found. Initiating CPU mode..."
+            )
     standAlone = int(configDict["standalone"])
 
     # Load DSM
