@@ -6,6 +6,8 @@ try:
 except:
     pass
 
+author = "xlinfr and Lemap01"
+
 
 def Perez_v3(
     zen, azimuth, radD, radI, jday, patchchoice, patch_option, device
@@ -201,64 +203,70 @@ def Perez_v3(
         device=device,
     )
 
-    acoeff = torch.stack([m_a1, m_a2, m_a3, m_a4], dim=1)
-    bcoeff = torch.stack([m_b1, m_b2, m_b3, m_b4], dim=1)
-    ccoeff = torch.stack([m_c1, m_c2, m_c3, m_c4], dim=1)
-    dcoeff = torch.stack([m_d1, m_d2, m_d3, m_d4], dim=1)
-    ecoeff = torch.stack([m_e1, m_e2, m_e3, m_e4], dim=1)
+    acoeff = torch.transpose(torch.atleast_2d([m_a1, m_a2, m_a3, m_a4]))
+    bcoeff = torch.transpose(torch.atleast_2d([m_b1, m_b2, m_b3, m_b4]))
+    ccoeff = torch.transpose(torch.atleast_2d([m_c1, m_c2, m_c3, m_c4]))
+    dcoeff = torch.transpose(torch.atleast_2d([m_d1, m_d2, m_d3, m_d4]))
+    ecoeff = torch.transpose(torch.atleast_2d([m_e1, m_e2, m_e3, m_e4]))
 
-    deg2rad = torch.tensor(torch.pi / 180, device=device).clone().detach()
-    rad2deg = torch.tensor(180 / torch.pi, device=device).clone().detach()
+    deg2rad = torch.pi / 180
+    rad2deg = 180 / torch.pi
     altitude = 90 - zen
-    zen = torch.tensor(zen, device=device) * deg2rad
-    azimuth = torch.tensor(azimuth, device=device) * deg2rad
-    altitude = torch.tensor(altitude, device=device) * deg2rad
+    zen = zen * deg2rad
+    azimuth = azimuth * deg2rad
+    altitude = altitude * deg2rad
     Idh = radD
     Ibn = radI
 
-    PerezClearness = ((Idh + Ibn) / (Idh + 1.041 * torch.pow(zen, 3))) / (
-        1 + 1.041 * torch.pow(zen, 3)
+    # Skyclearness
+    PerezClearness = ((Idh + Ibn) / (Idh + 1.041 * torch.power(zen, 3))) / (
+        1 + 1.041 * torch.power(zen, 3)
     )
-
+    # Extra terrestrial radiation
     day_angle = jday * 2 * torch.pi / 365
     I0 = 1367 * (
         1.00011
-        + 0.034221 * torch.cos(torch.tensor(day_angle))
-        + 0.00128 * torch.sin(torch.tensor(day_angle))
-        + 0.000719 * torch.cos(2 * torch.tensor(day_angle))
-        + 0.000077 * torch.sin(2 * torch.tensor(day_angle))
+        + 0.034221 * torch.cos(day_angle)
+        + 0.00128 * torch.sin(day_angle)
+        + 0.000719 *
+        # New from robinsson
+        torch.cos(2 * day_angle)
+        + 0.000077 * torch.sin(2 * day_angle)
     )
 
+    # Optical air mass
     if altitude >= 10 * deg2rad:
         AirMass = 1 / torch.sin(altitude)
-    elif altitude < 0:
-        AirMass = 1 / torch.sin(altitude) + 0.50572 * torch.pow(
-            180 * torch.complex(altitude, 0) / torch.pi + 6.07995, -1.6364
+    elif altitude < 0:  # below equation becomes complex
+        AirMass = 1 / torch.sin(altitude) + 0.50572 * torch.power(
+            180 * complex(altitude) / torch.pi + 6.07995, -1.6364
         )
     else:
-        AirMass = 1 / torch.sin(altitude) + 0.50572 * torch.pow(
+        AirMass = 1 / torch.sin(altitude) + 0.50572 * torch.power(
             180 * altitude / torch.pi + 6.07995, -1.6364
         )
 
-    PerezBrightness = (AirMass * Idh) / I0
+    # Skybrightness
+    PerezBrightness = (AirMass * radD) / I0
     if Idh <= 10:
         PerezBrightness = torch.tensor(0.0, device=device)
 
+    # sky clearness bins
     if PerezClearness < 1.065:
         intClearness = 0
-    elif PerezClearness < 1.230:
+    if PerezClearness > 1.065 and PerezClearness < 1.230:
         intClearness = 1
-    elif PerezClearness < 1.500:
+    if PerezClearness > 1.230 and PerezClearness < 1.500:
         intClearness = 2
-    elif PerezClearness < 1.950:
+    if PerezClearness > 1.500 and PerezClearness < 1.950:
         intClearness = 3
-    elif PerezClearness < 2.800:
+    if PerezClearness > 1.950 and PerezClearness < 2.800:
         intClearness = 4
-    elif PerezClearness < 4.500:
+    if PerezClearness > 2.800 and PerezClearness < 4.500:
         intClearness = 5
-    elif PerezClearness < 6.200:
+    if PerezClearness > 4.500 and PerezClearness < 6.200:
         intClearness = 6
-    else:
+    if PerezClearness > 6.200:
         intClearness = 7
 
     m_a = (
@@ -294,9 +302,10 @@ def Perez_v3(
             * (dcoeff[intClearness, 2] + dcoeff[intClearness, 3] * zen)
         )
     else:
+        # different equations for c & d in clearness bin no. 1,  from Robinsson
         m_c = (
             torch.exp(
-                torch.pow(
+                torch.power(
                     PerezBrightness
                     * (
                         ccoeff[intClearness, 0] + ccoeff[intClearness, 1] * zen
@@ -316,11 +325,14 @@ def Perez_v3(
         )
 
     if patchchoice == 2:
-        skyvaultalt = torch.zeros((90, 361), device=device)
-        skyvaultazi = torch.zeros((90, 361), device=device)
+        skyvaultalt = torch.atleast_2d(torch.tensor([], device=device))
+        skyvaultazi = torch.atleast_2d(torch.tensor([], device=device))
+        # Creating skyvault at one degree intervals
+        skyvaultalt = torch.ones([90, 361], device=device) * 90
+        skyvaultazi = torch.empty((90, 361), device=device)
         for j in range(90):
             skyvaultalt[j, :] = 91 - j
-            skyvaultazi[j, :] = torch.arange(361)
+            skyvaultazi[j, :] = range(361)
 
     elif patchchoice == 1:
         skyvaultalt, skyvaultazi, _, _, _, _, _ = create_patches(
@@ -331,10 +343,12 @@ def Perez_v3(
     skyvaultalt = skyvaultalt * deg2rad
     skyvaultazi = skyvaultazi * deg2rad
 
+    # Angular distance from the sun from Robinsson
     cosSkySunAngle = torch.sin(skyvaultalt) * torch.sin(altitude) + torch.cos(
         altitude
     ) * torch.cos(skyvaultalt) * torch.cos(torch.abs(skyvaultazi - azimuth))
 
+    # Main equation
     lv = (1 + m_a * torch.exp(m_b / torch.cos(skyvaultzen))) * (
         (
             1
@@ -343,11 +357,12 @@ def Perez_v3(
         )
     )
 
+    # Normalisation
     lv = lv / torch.sum(lv)
 
     if patchchoice == 1:
-        x = torch.transpose(torch.unsqueeze(skyvaultalt * rad2deg, 0), 0, 1)
-        y = torch.transpose(torch.unsqueeze(skyvaultazi * rad2deg, 0), 0, 1)
-        z = torch.transpose(torch.unsqueeze(lv, 0), 0, 1)
-        lv = torch.cat((x, y, z), dim=1)
+        x = torch.transpose(torch.atleast_2d(skyvaultalt * rad2deg))
+        y = torch.transpose(torch.atleast_2d(skyvaultazi * rad2deg))
+        z = torch.transpose(torch.atleast_2d(lv))
+        lv = torch.append(torch.append(x, y, axis=1), z, axis=1)
     return lv, PerezClearness, PerezBrightness

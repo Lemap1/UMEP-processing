@@ -316,6 +316,7 @@ def Solweig_2026a_calc(
                     bush,
                     walls,
                     dirwalls * torch.pi / 180.0,
+                    device,
                     walls_scheme,
                     dirwalls_scheme * torch.pi / 180.0,
                 )

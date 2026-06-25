@@ -93,6 +93,8 @@ def solweig_run(configPath, feedback):
             feedback.setProgressText(
                 "PyTorch and NVIDIA/AMD GPU found. Initiating CUDA mode..."
             )
+        else:
+            print("PyTorch and NVIDIA/AMD GPU found. Initiating CUDA mode...")
 
     elif (
         configDict["calculation_mode"] == "gpu"
@@ -105,10 +107,16 @@ def solweig_run(configPath, feedback):
             feedback.setProgressText(
                 "PyTorch and Intel GPU found. Initiating XPU mode..."
             )
+        else:
+            print("PyTorch and Intel GPU found. Initiating XPU mode...")
 
     else:
         if feedback is not None:
             feedback.setProgressText(
+                "PyTorch found but compatible GPU not found. Initiating CPU mode..."
+            )
+        else:
+            print(
                 "PyTorch found but compatible GPU not found. Initiating CPU mode..."
             )
     standAlone = int(configDict["standalone"])

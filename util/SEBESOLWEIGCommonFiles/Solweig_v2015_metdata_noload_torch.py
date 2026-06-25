@@ -5,12 +5,12 @@ from . import sun_position_torch as sp
 
 # import sun_position as sp
 import datetime
-import calendar
 
 try:
     import torch
 except:
     pass
+author = "xlinfr and Lemap01"
 
 
 def Solweig_2015a_metdata_noload(inputdata, location, UTC):
@@ -32,7 +32,6 @@ def Solweig_2015a_metdata_noload(inputdata, location, UTC):
     dectime = torch.tensor(
         met[:, 1] + met[:, 2] / 24 + met[:, 3] / (60 * 24.0)
     )
-    dectimemin = met[:, 3] / (60 * 24.0)
     if data_len == 1:
         halftimestepdec = 0
     else:
@@ -56,8 +55,6 @@ def Solweig_2015a_metdata_noload(inputdata, location, UTC):
     sunmax = dict()
 
     for i, row in enumerate(met[:, 0]):
-        if met[i, 1] == 221:
-            test = 4
         YMD = datetime.datetime(int(met[i, 0]), 1, 1) + datetime.timedelta(
             int(met[i, 1]) - 1
         )

@@ -66,6 +66,7 @@ def solweig_run(configPath, feedback):
     """
 
     # Load config file
+    print("passe")
     configDict = read_solweig_config(configPath)
 
     # Load parameters settings for SOLWEIG
