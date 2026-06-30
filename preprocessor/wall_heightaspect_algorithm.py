@@ -186,7 +186,6 @@ class ProcessingWallHeightAscpetAlgorithm(QgsProcessingAlgorithm):
         dsm = gdal_dsm.ReadAsArray().astype(float)
 
         feedback.setProgressText("Calculating wall height")
-        total = 100.0 / (int(dsm.shape[0] * dsm.shape[1]))
 
         if use_gpu:
             walls = wa_torch.findwalls_sp(dsm, walllimit, device, False)
@@ -218,22 +217,13 @@ class ProcessingWallHeightAscpetAlgorithm(QgsProcessingAlgorithm):
                 saverasternd(gdal_dsm, outputFileAspect, dirwalls)
             else:
 
-                if use_gpu:
-                    dirwalls = wa_torch.filter1Goodwin_as_aspect_v3(
-                        walls,
-                        1,
-                        dsm,
-                        feedback,
-                        total,
-                    )
-                else:
-                    dirwalls = wa.filter1Goodwin_as_aspect_v3(
-                        walls,
-                        1,
-                        dsm,
-                        feedback,
-                        total,
-                    )
+                dirwalls = wa.filter1Goodwin_as_aspect_v3(
+                    walls,
+                    1,
+                    dsm,
+                    feedback,
+                    total,
+                )
                 saverasternd(gdal_dsm, outputFileAspect, dirwalls)
         else:
             feedback.setProgressText("Wall aspect not calculated")

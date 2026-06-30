@@ -13,48 +13,94 @@ except:
 
 # import scipy.misc as sc
 import scipy.ndimage as sc
-from scipy.ndimage import maximum_filter
 
 
 def findwalls_sp(arr_dsm, walllimit, device, footprint=None):
+    """
+    Identifie les murs de manière ultra-optimisée en mémoire (sans F.unfold).
+    """
+    # 1. S'assurer que l'entrée est un tenseur PyTorch
     if isinstance(arr_dsm, torch.Tensor):
         dsm_tensor = arr_dsm
     else:
         dsm_tensor = torch.tensor(arr_dsm, device=device)
 
+    # 2. Définir le footprint par défaut (forme de diamant / points cardinaux)
     if footprint is None or footprint is False:
         footprint = torch.tensor(
             [[0, 1, 0], [1, 1, 1], [0, 1, 0]], device=device
         )
-    else:
-        footprint = footprint.to(device=device)
 
     fh, fw = footprint.shape
     pad_h, pad_w = fh // 2, fw // 2
 
+    # Padding adaptatif basé sur la taille du filtre
     padded_a = dsm_tensor.unsqueeze(0).unsqueeze(0)
     padded_a = F.pad(
         padded_a, pad=(pad_w, pad_w, pad_h, pad_h), mode="replicate"
     )
     padded_a = padded_a.squeeze(0).squeeze(0)
 
+    # Initialisation de la matrice des maximums avec une valeur minimale (-infini)
     max_neighbors = torch.full_like(dsm_tensor, float("-inf"))
 
+    # Trouver les coordonnées où le filtre est actif (égal à 1)
     y_indices, x_indices = torch.where(footprint == 1)
 
+    # Utilisation du glissement par vue (0 copie mémoire)
     H, W = dsm_tensor.shape
     for dy, dx in zip(y_indices, x_indices):
+        # Cette ligne crée une "vue" virtuelle sans allouer de RAM
         shifted_view = padded_a[dy : dy + H, dx : dx + W]
+        # Comparaison élément par élément optimisée
         max_neighbors = torch.maximum(max_neighbors, shifted_view)
 
+    # 3. Identification des pixels de murs
     walls = max_neighbors - dsm_tensor
 
+    # Appliquer la limite de hauteur des murs
     walls[walls < walllimit] = 0
 
+    # 4. Remise à zéro des bordures extérieures
     walls[0, :] = 0
     walls[-1, :] = 0
     walls[:, 0] = 0
     walls[:, -1] = 0
+
+    return walls
+
+
+def findwalls(a, walllimit, feedback, total):
+    # This function identifies walls based on a DSM and a wall-height limit
+    # Walls are represented by outer pixels within building footprints
+    #
+    # Fredrik Lindberg, Goteborg Urban Climate Group
+    # fredrikl@gvc.gu.se
+    # 20150625
+
+    col, row = a.shape
+    walls = torch.zeros((col, row))
+    domain = torch.tensor([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
+    index = 0
+    for i in torch.arange(1, row - 1):
+        if feedback.isCanceled():
+            feedback.setProgressText("Calculation cancelled")
+            break
+        for j in torch.arange(1, col - 1):
+            dom = a[j - 1 : j + 2, i - 1 : i + 2]
+            walls[j, i] = torch.max(
+                dom[torch.where(domain == 1)]
+            )  # new 20171006
+            index = index + 1
+            feedback.setProgress(int(index * total))
+
+    walls = torch.clone(walls - a)  # new 20171006
+    walls[(walls < walllimit)] = 0
+
+    walls[0 : walls.shape[0], 0] = 0
+    walls[0 : walls.shape[0], walls.shape[1] - 1] = 0
+    walls[0, 0 : walls.shape[0]] = 0
+    walls[walls.shape[0] - 1, 0 : walls.shape[1]] = 0
 
     return walls
 
@@ -80,10 +126,7 @@ def filter1Goodwin_as_aspect_v3(
     row, col = a.shape
 
     # 1. Compute kernel footprint based on scale factor
-    filtersize = torch.floor(
-        (scale + torch.tensor(0.0000000001, device=device))
-        * torch.tensor(9, device=device)
-    )
+    filtersize = torch.floor((scale + 0.0000000001) * 9)
     if filtersize <= 2:
         filtersize = 3
     elif filtersize != 9 and filtersize % 2 == 0:
@@ -106,7 +149,7 @@ def filter1Goodwin_as_aspect_v3(
     buildfilt1_list = []
     buildfilt2_list = []
 
-    # 2. Pre-calculate all 180 directional filters on CPU or GPU
+    # 2. Pre-calculate all 180 directional filters on CPU
     with torch.no_grad():
         for h in range(180):
             filtmatrix1temp = sc.rotate(
@@ -327,28 +370,6 @@ def filter1Goodwin_as_aspect_v3(
     if feedback is not None:
         feedback.setProgress(int(total))
 
-    del (
-        filtmatrix,
-        buildfilt,
-        filtmatrix_list,
-        buildfilt1_list,
-        buildfilt2_list,
-    )
-    del all_kernels_walls, all_kernels_dsm1, all_kernels_dsm2
-    del (
-        final_x,
-        walls_binary,
-        a_device,
-        border_mask,
-        valid_mask,
-        grad,
-        asp,
-        asp_device,
-    )
-    if device.type == "cuda":
-        torch.cuda.empty_cache()
-    elif device.type == "xpu":
-        torch.xpu.empty_cache()
     return final_y
 
 
